@@ -1,0 +1,712 @@
+/* The shell: the file tree, the start screen, the find bar and the few controls app.css does not
+   already carry. Everything here is flat and kebab-case, every state is a data attribute, and
+   every colour, radius and type size comes from tokens.css. */
+
+:root {
+  /* One indent step per level of the tree. Declared here because the depth arrives as a bare
+     number on the row and the step has to live somewhere the row can multiply by. */
+  --tree-step: 13px;
+  --tree-row-h: 26px;
+}
+
+/* Title bar */
+
+.titlebar .doc-title {
+  display: flex;
+  align-items: center;
+  max-width: 42ch;
+  padding: 4px 10px;
+  border-radius: var(--r-sm);
+  transition: background 120ms var(--ease), color 120ms var(--ease);
+}
+
+.titlebar button.doc-title:hover {
+  background: var(--accent-wash);
+  color: var(--ink);
+}
+
+.titlebar .doc-title[data-external="true"] {
+  color: var(--danger);
+}
+
+.titlebar .title-rename {
+  width: 26ch;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  background: var(--raised);
+  font-size: var(--t-2);
+  text-align: center;
+}
+
+.titlebar .title-rename:focus {
+  outline: none;
+}
+
+/* Sidebar chrome */
+
+.sidebar-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 8px 6px 4px;
+}
+
+.sidebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.sidebar-empty {
+  margin: 10px 22px;
+  font-size: var(--t-2);
+  color: var(--ink-faint);
+}
+
+.pane-resizer {
+  flex: none;
+  width: 0;
+  position: relative;
+  z-index: 5;
+  cursor: col-resize;
+}
+
+.pane-resizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 8px;
+}
+
+.pane-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -1px;
+  width: 2px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 120ms var(--ease);
+}
+
+.pane-resizer:hover::after,
+:root[data-resizing] .pane-resizer::after {
+  opacity: 0.55;
+}
+
+:root[data-resizing] body {
+  cursor: col-resize;
+}
+
+:root[data-resizing] .sidebar {
+  transition: none;
+}
+
+:root[data-sidebar="false"] .pane-resizer {
+  display: none;
+}
+
+/* The tree */
+
+.tree-section {
+  padding: 2px 0;
+}
+
+.tree-section + .tree-section {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+
+.tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tree-item {
+  position: relative;
+}
+
+.tree-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: var(--tree-row-h);
+  padding-right: 6px;
+  padding-left: calc(6px + var(--tree-depth) * var(--tree-step));
+  border-radius: var(--r-sm);
+  color: var(--ink-soft);
+  cursor: default;
+  transition: background 120ms var(--ease), color 120ms var(--ease), opacity 120ms var(--ease);
+}
+
+.tree-row:hover {
+  background: var(--accent-wash);
+  color: var(--ink);
+}
+
+.tree-row[data-selected="true"] {
+  background: var(--accent-wash);
+  color: var(--ink);
+}
+
+.tree-row[data-current="true"] {
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 1px 2px var(--accent-wash);
+}
+
+.tree-row[data-current="true"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+}
+
+.tree-row[data-root="true"] {
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: 0.01em;
+}
+
+/* A file the editor cannot model opens in whatever macOS opens it with, and reads as a passenger
+   in the folder rather than as something this app is offering to edit. */
+.tree-row[data-foreign="true"] {
+  color: var(--ink-faint);
+}
+
+.tree-row[data-dragging="true"] {
+  opacity: 0.4;
+}
+
+.tree-twisty {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--r-sm);
+  color: var(--ink-faint);
+}
+
+button.tree-twisty:hover {
+  background: var(--accent-wash);
+  color: var(--ink);
+}
+
+.tree-glyph {
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--ink-faint);
+}
+
+.tree-row[data-current="true"] .tree-glyph {
+  color: var(--accent);
+}
+
+.tree-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--t-3);
+}
+
+.tree-ext {
+  color: var(--ink-faint);
+}
+
+.tree-rename {
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  padding: 0 5px;
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  background: var(--raised);
+  font-size: var(--t-3);
+}
+
+.tree-rename:focus {
+  outline: none;
+}
+
+.tree-row .row-menu-btn {
+  flex: none;
+  opacity: 0;
+}
+
+.tree-row:hover .row-menu-btn,
+.tree-row:focus-within .row-menu-btn,
+.tree-row .row-menu-btn[data-open="true"] {
+  opacity: 0.7;
+}
+
+.tree-row:hover .row-menu-btn:hover,
+.tree-row .row-menu-btn[data-open="true"] {
+  opacity: 1;
+}
+
+/* Drop targets. Three shapes for three answers: a line above or below means the folder the row
+   already sits in, and a filled outline means the folder under the pointer. */
+
+.tree-row[data-drop-before="true"]::after,
+.tree-row[data-drop-after="true"]::after {
+  content: "";
+  position: absolute;
+  left: calc(6px + var(--tree-depth) * var(--tree-step));
+  right: 6px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.tree-row[data-drop-before="true"]::after {
+  top: -1px;
+}
+
+.tree-row[data-drop-after="true"]::after {
+  bottom: -1px;
+}
+
+.tree-row[data-drop-into="true"] {
+  background: var(--accent-wash);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* Buttons app.css does not carry */
+
+.btn-ghost,
+.btn-danger {
+  font-family: var(--font-ui);
+  font-size: var(--t-3);
+  font-weight: 500;
+  padding: 9px 20px;
+  border-radius: var(--r-sm);
+  transition: background 120ms var(--ease), color 120ms var(--ease);
+}
+
+.btn-ghost {
+  color: var(--ink-soft);
+}
+
+.btn-ghost:hover {
+  background: var(--accent-wash);
+  color: var(--ink);
+}
+
+.btn-danger {
+  background: var(--danger);
+  color: var(--danger-contrast);
+}
+
+.btn-danger:hover {
+  background: var(--danger-ink);
+}
+
+.panel-confirm {
+  width: min(420px, calc(100vw - 32px));
+}
+
+.confirm-text {
+  margin: 0;
+  font-size: var(--t-4);
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+.confirm-text strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* The start screen */
+
+.start {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  background: var(--shell);
+}
+
+.start-drag {
+  flex: none;
+  height: 28px;
+}
+
+.start-body {
+  width: min(520px, calc(100% - 48px));
+  margin: 0 auto;
+  padding: 8vh 0 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.start-title {
+  margin: 0;
+  font-family: var(--font-book);
+  font-weight: 500;
+  font-size: 30px;
+  color: var(--ink);
+}
+
+.start-line {
+  margin: 0;
+  max-width: 42ch;
+  font-size: var(--t-4);
+  line-height: 1.55;
+  color: var(--ink-soft);
+}
+
+.start-open {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 8px;
+  padding: 11px 18px;
+  border-radius: var(--r-md);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-family: var(--font-ui);
+  font-size: var(--t-4);
+  font-weight: 500;
+  transition: background 120ms var(--ease), opacity 120ms var(--ease);
+}
+
+.start-open:hover {
+  background: var(--accent-ink);
+}
+
+.start-open:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.start-recent {
+  align-self: stretch;
+  margin-top: 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.start-recent .nav-label {
+  padding: 4px 0 6px;
+}
+
+.start-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.start-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: var(--r-sm);
+  color: var(--ink-soft);
+  text-align: left;
+  transition: background 120ms var(--ease), color 120ms var(--ease);
+}
+
+.start-row:hover {
+  background: var(--accent-wash);
+  color: var(--ink);
+}
+
+.start-row svg {
+  align-self: center;
+  color: var(--ink-faint);
+}
+
+.start-name {
+  flex: none;
+  font-size: var(--t-4);
+  color: var(--ink);
+}
+
+.start-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font-size: var(--t-2);
+  color: var(--ink-faint);
+}
+
+/* Find and replace */
+
+.find-bar {
+  position: fixed;
+  top: calc(var(--titlebar-h) + 10px);
+  right: 18px;
+  z-index: 30;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 7px;
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop);
+  animation: find-drop 140ms var(--ease);
+}
+
+@keyframes find-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.find-expand {
+  flex: none;
+  width: 20px;
+  align-self: stretch;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-sm);
+  color: var(--ink-faint);
+  transition: background 120ms var(--ease), color 120ms var(--ease);
+}
+
+.find-expand:hover {
+  background: var(--accent-wash);
+  color: var(--ink);
+}
+
+.find-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.find-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.find-input {
+  width: 196px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--raised);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--t-2);
+}
+
+.find-input::placeholder {
+  color: var(--ink-faint);
+}
+
+.find-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.find-count {
+  min-width: 66px;
+  padding: 0 4px;
+  font-size: var(--t-1);
+  color: var(--ink-faint);
+  white-space: nowrap;
+  text-align: right;
+}
+
+.find-btn {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-sm);
+  color: var(--ink-soft);
+  transition: background 120ms var(--ease), color 120ms var(--ease);
+}
+
+.find-btn:hover:not(:disabled) {
+  background: var(--accent-wash);
+  color: var(--ink);
+}
+
+.find-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.find-toggle {
+  height: 26px;
+  min-width: 28px;
+  padding: 0 6px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-sm);
+  color: var(--ink-soft);
+  font-family: var(--font-ui);
+  font-size: var(--t-2);
+  font-weight: 600;
+  transition: background 120ms var(--ease), color 120ms var(--ease);
+}
+
+.find-toggle:hover {
+  background: var(--accent-wash);
+  color: var(--ink);
+}
+
+.find-toggle[data-on="true"] {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.find-ww {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.find-action {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: var(--r-sm);
+  background: var(--accent-wash);
+  color: var(--ink-soft);
+  font-family: var(--font-ui);
+  font-size: var(--t-2);
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background 120ms var(--ease), color 120ms var(--ease);
+}
+
+.find-action:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.find-action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* The document pane with a folder open and nothing chosen out of it. Not an error and not a second
+   start screen: one line, in the same faint ink the empty sidebar uses. */
+
+.pane-empty {
+  margin: auto;
+  padding: 0 24px;
+  font-size: var(--t-4);
+  color: var(--ink-faint);
+}
+
+/* Three answers rather than two, and none of them wants to be two lines high. */
+
+.panel-conflict {
+  width: min(560px, calc(100vw - 32px));
+}
+
+/* The affirmative button in a dialog whose other answer is destructive. app.css carries the ghost
+   and the danger; this is the third one, and it is here rather than there for the same reason the
+   other two are. */
+
+.btn-primary {
+  font-family: var(--font-ui);
+  font-size: var(--t-3);
+  font-weight: 500;
+  padding: 9px 20px;
+  border-radius: var(--r-sm);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  transition: background 120ms var(--ease), color 120ms var(--ease);
+}
+
+.btn-primary:hover {
+  background: var(--accent-ink);
+}
+
+/* The shortcuts sheet, which is generated from the binding table rather than written out, so these
+   rules have to hold for however many rows that table grows. */
+
+.panel-keys {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.key-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.key-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.key-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 5px 0;
+}
+
+.key-row + .key-row {
+  border-top: 1px solid var(--line);
+}
+
+.key-what {
+  font-size: var(--t-3);
+  color: var(--ink);
+}
+
+.key-combos {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.key-cap {
+  padding: 2px 7px;
+  border-radius: var(--r-sm);
+  background: var(--accent-wash);
+  color: var(--ink-soft);
+  font-family: var(--font-ui);
+  font-size: var(--t-2);
+  font-weight: 600;
+  white-space: nowrap;
+}

@@ -1,0 +1,27 @@
+/* The editor width menu in the title bar.
+ *
+ * It borrows .menu-wrap, .menu-backdrop, .menu, .menu-label and .icon-button from app.css so that
+ * it is the same object as the "More" menu two buttons along rather than a second kind of popup,
+ * and adds only what a menu of exclusive choices needs that a menu of actions does not: a mark on
+ * the one that is applied. app.css marks a current item with `color: var(--accent)` alone, which
+ * between two warm greys is a difference a lot of people cannot see, and colour is the whole of
+ * what it says. */
+
+.width-menu-item {
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Kept in the layout rather than removed, so the three labels stand on one left edge whichever of
+   them is current and the list does not shuffle sideways as the choice moves. */
+.width-menu-check {
+  display: grid;
+  place-items: center;
+  opacity: 0;
+}
+
+.width-menu-item[data-on="true"] .width-menu-check {
+  opacity: 1;
+}

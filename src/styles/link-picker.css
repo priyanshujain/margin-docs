@@ -1,0 +1,107 @@
+/* The `[[` picker's list, hung off the caret by src/editor/linkPicker.ts.
+ *
+ * It is a child of the page body rather than of the document, so it is positioned in viewport
+ * coordinates and nothing here may assume a containing block: the pane scrolls, the sheet clips its
+ * overflow, and a table, a callout or a fenced block between the caret and the page would each have
+ * taken a corner off it. `top` and `left` are written by the plugin on every scroll; everything
+ * else about where it sits is here.
+ *
+ * `data-flip` says which side of the caret it landed on and exists so the entrance grows out of the
+ * caret rather than towards it. `data-active` is the row the arrow keys are on and `data-error` is
+ * the note carrying whatever the index said when it could not answer. */
+
+.link-picker {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 55;
+  width: max-content;
+  min-width: 232px;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 5px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop);
+  font-family: var(--font-ui);
+  animation: link-picker-in 100ms var(--ease);
+  transform-origin: top left;
+}
+
+.link-picker[data-flip="up"] {
+  transform-origin: bottom left;
+}
+
+@keyframes link-picker-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+.link-picker-note {
+  padding: 8px 10px;
+  font-size: var(--t-2);
+  color: var(--ink-faint);
+}
+
+.link-picker-note[hidden] {
+  display: none;
+}
+
+/* The index refusing to answer is the user's problem to see, not a quieter shade of empty. */
+.link-picker-note[data-error] {
+  color: var(--danger);
+}
+
+.link-picker-list {
+  max-height: 264px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.link-picker-list:empty {
+  display: none;
+}
+
+.link-picker-row {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding: 7px 10px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background 120ms var(--ease);
+}
+
+.link-picker-row[data-active] {
+  background: var(--accent-wash);
+}
+
+.link-picker-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--t-3);
+  color: var(--ink);
+}
+
+/* The path is the tie breaker between two documents of the same name, so it is always drawn, and
+   it is the half that gives way when the row is too narrow for both. */
+.link-picker-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-size: var(--t-1);
+  color: var(--ink-faint);
+}
+
+.link-picker-hit {
+  color: var(--ink-soft);
+  font-weight: 600;
+}

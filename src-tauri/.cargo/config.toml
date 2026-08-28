@@ -1,0 +1,8 @@
+# tests/no_write_on_open.rs runs against one real git repository on disk and several of its tests
+# mutate it, so they have to run one at a time. The file has always said so in a comment; this is
+# what makes plain `cargo test` obey it, rather than leaving the suite green only for whoever
+# remembers to pass `-- --test-threads=1`.
+#
+# The other suites use a TempDir each and do not care. Serializing them costs well under a second.
+[env]
+RUST_TEST_THREADS = "1"

@@ -1,0 +1,85 @@
+/* Syntax colours inside a fenced code block, and nothing else.
+ *
+ * The surface, the border, the padding, the scroller and the language label are prose.css's, on the
+ * <pre> and the <code> it already styles. What is here is the colour of the spans inside that
+ * <code>, which are inline decorations from src/editor/blocks/code.ts carrying highlight.js's own
+ * class names. They are not in the document: nothing selected here can change a byte of the file.
+ *
+ * Only the classes lowlight can actually emit are listed. A grammar that emits a class this file
+ * does not name renders in the document's ink, which is the right answer for an unclassified token
+ * anyway, so nothing has to be added here when a language is registered.
+ *
+ * The palette is six hues and it lives in tokens.css beside --code-surface, which is the surface it
+ * was matched against. Comments and metadata borrow --ink-soft instead of a hue of their own. */
+
+/* --------------------------------------------------------------------------------------------
+   The tokens a grammar names
+   -------------------------------------------------------------------------------------------- */
+
+/* Words the language reserved, and the markers that behave like one: an XML tag name, a CSS
+   selector, a markdown heading. All of them are the shape of the code rather than its content. */
+.prose pre > code :is(.hljs-keyword, .hljs-literal, .hljs-doctag, .hljs-name, .hljs-selector-tag) {
+  color: var(--code-keyword);
+}
+
+.prose pre > code :is(.hljs-section, .hljs-template-tag) {
+  color: var(--code-keyword);
+  font-weight: 600;
+}
+
+/* Text the program carries rather than executes. A regexp is here and not with the numbers because
+   in every language that has one it is written as a literal between delimiters, and reading it as
+   one span is what makes the slashes findable. */
+.prose pre > code :is(.hljs-string, .hljs-regexp, .hljs-addition, .hljs-meta .hljs-string) {
+  color: var(--code-string);
+}
+
+.prose pre > code :is(.hljs-number, .hljs-symbol, .hljs-bullet, .hljs-link, .hljs-char.escape_) {
+  color: var(--code-number);
+}
+
+/* What is being called or defined here. */
+.prose pre > code :is(.hljs-title, .hljs-title.function_, .hljs-built_in, .hljs-formula) {
+  color: var(--code-function);
+}
+
+/* And what it is being called on: types, classes and the language's own names for itself, which
+   are all nouns the program did not invent. */
+.prose pre > code :is(.hljs-type, .hljs-title.class_, .hljs-variable.language_),
+.prose pre > code :is(.hljs-selector-class, .hljs-selector-id, .hljs-template-variable) {
+  color: var(--code-type);
+}
+
+.prose pre > code :is(.hljs-variable, .hljs-attr, .hljs-attribute),
+.prose pre > code :is(.hljs-property, .hljs-selector-pseudo) {
+  color: var(--code-variable);
+}
+
+/* Quieter than the code around it, which is the whole of what a comment is. Italic because the
+   monospace faces this app ships have a real italic and a paragraph of English inside a fence
+   should not be mistaken for a line of the program. */
+.prose pre > code :is(.hljs-comment, .hljs-quote) {
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+/* Directives, shebangs, preprocessor lines and the punctuation a grammar bothered to name: present,
+   never loud. */
+.prose pre > code :is(.hljs-meta, .hljs-meta .hljs-keyword, .hljs-punctuation, .hljs-operator) {
+  color: var(--ink-soft);
+}
+
+/* A diff's removed line. The added one is a string green above, so the pair reads the way a diff
+   does everywhere else. */
+.prose pre > code .hljs-deletion {
+  color: var(--danger);
+}
+
+/* Markdown in a fence, which is the one language whose own emphasis has to survive being quoted. */
+.prose pre > code .hljs-emphasis {
+  font-style: italic;
+}
+
+.prose pre > code .hljs-strong {
+  font-weight: 600;
+}

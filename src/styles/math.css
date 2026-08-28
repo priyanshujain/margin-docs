@@ -1,0 +1,111 @@
+/* Math while it is being edited, and math KaTeX could not draw.
+ *
+ * What a formula looks like when it is neither of those belongs to prose.css: .math-inline and
+ * .math-block are set there, against the same elements the schema's own toDOM describes, and
+ * nothing here restates them. The two hooks below come from the node view in
+ * src/editor/blocks/math.ts, which draws the rendered formula and the field its LaTeX is typed into
+ * as siblings inside that element and says which of them is on screen with data-editing.
+ *
+ * Nothing here depends on where the file lands in the cascade: every rule that answers one of
+ * prose.css's or one of katex.min.css's is the more specific of the two. There are no rules for a
+ * theme either, because every value is a token and the tokens are what data-theme swaps.
+ *
+ * katex.min.css is imported by math.ts rather than from main.tsx with the app's own sheets, since
+ * the app's CSP will not fetch the fonts it names from anywhere but the bundle. */
+
+/* --------------------------------------------------------------------------------------------
+   The drawn formula
+   -------------------------------------------------------------------------------------------- */
+
+/* prose.css sets a formula in the code voice, which is the right look for the raw LaTeX an editor
+   with no node view falls back to and the wrong one for a drawn equation. What KaTeX draws wants
+   the document's own ink; its faces and its sizes are katex.min.css's and want nothing from here. */
+.prose .math-render > .katex {
+  color: var(--ink);
+}
+
+/* The block already carries the margin prose.css gave it, and KaTeX's own is inside the box on top
+   of that, which reads as an equation floating in the middle of one. */
+.prose .math-block .katex-display {
+  margin: 0;
+}
+
+/* An empty formula draws nothing at all, which leaves an atom with no hit area: nothing to click,
+   nothing to see, and no way back to it but the arrow keys. So it is a box until it is not empty. */
+.prose [data-math-empty]:not([data-editing]) > .math-render {
+  display: inline-block;
+  width: 2.2em;
+  height: 1em;
+  vertical-align: middle;
+  border: 1px dashed var(--doc-rule-strong);
+  border-radius: var(--r-sm);
+}
+
+/* KaTeX draws the LaTeX it could not parse itself, in the colour the node view hands it. This is
+   the other failure: KaTeX threw, so what is on the page is the source exactly as the file holds
+   it, and the reason is on the element's title. */
+.prose .math-render[data-math-error] {
+  color: var(--danger);
+  font-family: var(--font-mono);
+  font-size: var(--doc-mono-inline);
+  text-decoration: underline wavy var(--danger);
+  text-underline-offset: 0.2em;
+  cursor: help;
+}
+
+/* --------------------------------------------------------------------------------------------
+   The source field
+
+   An atom has no editable text of its own, so this is a real textarea the node view writes back to
+   the document from, and not a contenteditable ProseMirror would try to own.
+   -------------------------------------------------------------------------------------------- */
+
+.prose .math-source {
+  display: none;
+  margin: 0;
+  padding: 0.15em 0.4em;
+  border: 1px solid var(--doc-rule-strong);
+  border-radius: var(--r-sm);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--doc-mono);
+  line-height: 1.55;
+  /* The block centres what is in it, and the source is not the formula: it is read left to right. */
+  text-align: left;
+  /* Sized by the rows and cols the node view counts off the text, so there is no width here and no
+     drag handle offering to disagree with one. The focus ring is app.css's, like every other. */
+  resize: none;
+}
+
+.prose [data-editing] > .math-source {
+  display: block;
+}
+
+.prose .math-inline[data-editing] > .math-source {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.prose .math-block[data-editing] > .math-source {
+  width: 100%;
+}
+
+/* Inline, the field takes the formula's place: the two side by side would push the rest of the
+   line along as the source got longer. A display equation has the room, so it keeps its render
+   above the field and redraws there as the source is typed. */
+.prose .math-inline[data-editing] > .math-render,
+.prose [data-math-empty][data-editing] > .math-render {
+  display: none;
+}
+
+.prose .math-block[data-editing] > .math-render {
+  margin-bottom: 0.7em;
+}
+
+/* The chip prose.css draws around an inline formula is a fill and a rounding the field brings of
+   its own, and both of them nested is a box inside a box. */
+.prose .math-inline[data-editing] {
+  padding: 0;
+  background: none;
+}

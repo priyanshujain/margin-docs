@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop",
+  "description": "Window control, the updater and process restart, none of which a phone has",
+  "platforms": ["macOS", "windows", "linux"],
+  "windows": ["main"],
+  "permissions": [
+    "core:window:allow-destroy",
+    "core:window:allow-start-dragging",
+    "core:window:allow-toggle-maximize",
+    "updater:default",
+    "process:allow-restart"
+  ]
+}

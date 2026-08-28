@@ -1,0 +1,167 @@
+:root {
+  --font-ui: "Hanken Grotesk", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-book: "Literata", Georgia, "Times New Roman", serif;
+  --font-heading: "Literata", Georgia, "Times New Roman", serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  --r-sm: 5px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-pill: 999px;
+
+  --pane-sidebar: 248px;
+  --measure: 46em;
+  --titlebar-h: 46px;
+  --traffic-pad: 84px;
+  --touch-h: 44px;
+
+  --t-1: 11px;
+  --t-2: 12px;
+  --t-3: 13px;
+  --t-4: 15px;
+  --t-5: 16px;
+
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+:root,
+:root[data-theme="light"] {
+  --paper: #fcfbf7;
+  --shell: #f1ece2;
+  --sidebar: #ece6da;
+  --raised: #fbfaf6;
+
+  --ink: #23201b;
+  --ink-soft: #6b6458;
+  --ink-faint: #9b9484;
+
+  --line: #e3ddce;
+  --line-strong: #d6cfbd;
+
+  --accent: #2a2622;
+  --accent-ink: #100e0b;
+  --accent-wash: rgba(35, 32, 27, 0.08);
+  --accent-contrast: #faf7f0;
+  --selection: rgba(35, 32, 27, 0.14);
+  --glass: rgba(252, 251, 247, 0.86);
+
+  --danger: #b4453a;
+  --danger-ink: #963327;
+  --danger-wash: rgba(180, 69, 58, 0.1);
+  --danger-contrast: #faf7f0;
+
+  --shadow-page: 0 1px 2px rgba(35, 32, 27, 0.06), 0 14px 30px rgba(35, 32, 27, 0.09);
+  --shadow-pop: 0 8px 24px rgba(35, 32, 27, 0.14);
+  --shadow-raised: 0 1px 2px rgba(35, 32, 27, 0.05);
+
+  --scrim: rgba(35, 32, 27, 0.28);
+}
+
+:root[data-theme="dark"] {
+  --paper: #1d1a16;
+  --shell: #151310;
+  --sidebar: #1a1713;
+  --raised: #232019;
+
+  --ink: #ece6da;
+  --ink-soft: #a89f8e;
+  --ink-faint: #756d5e;
+
+  --line: #2c2823;
+  --line-strong: #3a352d;
+
+  --accent: #efe9dc;
+  --accent-ink: #ffffff;
+  --accent-wash: rgba(239, 233, 220, 0.12);
+  --accent-contrast: #1a1714;
+  --selection: rgba(239, 233, 220, 0.18);
+  --glass: rgba(33, 30, 25, 0.88);
+
+  --danger: #d97a6f;
+  --danger-ink: #e58e84;
+  --danger-wash: rgba(217, 122, 111, 0.16);
+  --danger-contrast: #1a1714;
+
+  --shadow-page: 0 1px 2px rgba(0, 0, 0, 0.4), 0 14px 34px rgba(0, 0, 0, 0.5);
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.55);
+  --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.35);
+
+  --scrim: rgba(0, 0, 0, 0.5);
+}
+
+/* Document typography, added for the editor surface. The four step scale above sizes chrome and
+   tops out at 16px, which a page of prose with six heading levels cannot be built from, so the
+   document carries its own scale rather than borrowing the sidebar's. */
+:root {
+  --doc-size: 17px;
+  --doc-lead: 1.7;
+
+  --doc-h1: 30px;
+  --doc-h2: 23px;
+  --doc-h3: 19px;
+  --doc-h4: 17px;
+  --doc-h5: 15px;
+  --doc-h6: 13px;
+
+  --doc-table: 15px;
+  --doc-mono: 14px;
+  --doc-mono-inline: 0.88em;
+
+  --doc-indent: 1.35em;
+  --doc-gutter: 1.55em;
+  --doc-check: 15px;
+  --doc-resize-handle: 4px;
+
+  --measure-narrow: 38em;
+  --measure-wide: 56em;
+
+  --sheet-pad-x: 26px;
+  --sheet-pad-t: 76px;
+  --sheet-pad-b: 168px;
+  --sheet-pad-x-compact: 18px;
+  --sheet-pad-t-compact: 40px;
+}
+
+/* --line and --raised were drawn for chrome, where every surface meets another across a hard
+   border and a hairline only has to separate a sidebar from a page. Inside a document a rule has
+   nothing but paper on both sides, and the dark palette's version of it is roughly a third weaker
+   than the light one, so the page gets its own rules and its own code surface, matched by
+   perceived lightness rather than by hex. */
+/* The six syntax hues are matched by perceived lightness to the code surface rather than by hex,
+   warm to sit on paper and desaturated enough that a screen of code reads as text rather than as a
+   chart. There is no seventh for comments: what separates a comment from code is that it is
+   quieter, not that it is another colour, so src/styles/code.css spends --ink-soft on it. */
+:root,
+:root[data-theme="light"] {
+  --doc-rule: #e3ddce;
+  --doc-rule-strong: #cdc4ae;
+  --doc-wash: rgba(35, 32, 27, 0.05);
+
+  --code-surface: #f2ece0;
+  --code-line: #e6dfce;
+  --code-wash: rgba(35, 32, 27, 0.08);
+
+  --code-keyword: #8f3f5e;
+  --code-string: #4c6b2f;
+  --code-number: #96591d;
+  --code-function: #2f5f8a;
+  --code-type: #6b4a9b;
+  --code-variable: #266a62;
+}
+
+:root[data-theme="dark"] {
+  --doc-rule: #35302a;
+  --doc-rule-strong: #4a4339;
+  --doc-wash: rgba(239, 233, 220, 0.035);
+
+  --code-surface: #282521;
+  --code-line: #38332b;
+  --code-wash: rgba(239, 233, 220, 0.06);
+
+  --code-keyword: #e08aa4;
+  --code-string: #a8c084;
+  --code-number: #dfae76;
+  --code-function: #8ab6dd;
+  --code-type: #bfa2e6;
+  --code-variable: #7fc7bc;
+}

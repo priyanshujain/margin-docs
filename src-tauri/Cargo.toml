@@ -1,0 +1,52 @@
+[package]
+name = "margin-docs"
+version = "0.0.1"
+description = "A folder of markdown documents"
+authors = ["Margin"]
+edition = "2021"
+license = "MIT"
+
+[lib]
+name = "margin_docs_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Gitignore-aware directory walking for the folder tree: a document folder under version control
+# should not surface .git or its own ignored build output as if they were documents.
+ignore = "0.4"
+notify = "8"
+notify-debouncer-full = "0.7"
+# Deleting a document goes to the OS trash rather than unlinking it outright.
+trash = "5"
+# rusqlite 0.40 has no separate "fts5" cargo feature to ask for: libsqlite3-sys's bundled build
+# compiles SQLITE_ENABLE_FTS5 in unconditionally, so "bundled" alone is what gets full text search.
+# margin-calendar does not carry this comment because it has no need for full text search.
+rusqlite = { version = "0.40", features = ["bundled"] }
+tokio = { version = "1", features = ["sync", "time"] }
+
+# Spelling is the system's, not ours. NSSpellChecker is the same checker every other Mac app
+# corrects into, so a word learned in Mail is not underlined here, and it carries the user's own
+# languages without this app shipping a dictionary. These objc2 crates are already in the graph
+# through Tauri, so asking for them adds nothing to the build but the features named.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSSpellChecker"] }
+objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSRange", "NSTextCheckingResult"] }
+
+# There is no auto-updater and no process to restart on a phone: the store is the update channel.
+# Gated here as well as behind cfg(desktop) in lib.rs so a mobile build does not compile them at all.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-process = "2"
+tauri-plugin-updater = "2"
+
+[dev-dependencies]
+tempfile = "3"

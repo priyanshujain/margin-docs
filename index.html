@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <script>
+      (function () {
+        try {
+          var root = document.documentElement;
+
+          var t = localStorage.getItem("margindocs-theme");
+          if (t !== "light" && t !== "dark")
+            t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+          root.setAttribute("data-theme", t);
+
+          var s = localStorage.getItem("margindocs-sidebar");
+          root.setAttribute("data-sidebar", s === "false" ? "false" : "true");
+
+          // The three names are the editor-width command ids in src/keys/commands.ts, so a width
+          // the palette can set is a width this script can restore. What each name is worth lives
+          // in sheet.css and only there: this sets the attribute those rules key off, never a
+          // length of its own.
+          var w = localStorage.getItem("margindocs-width");
+          if (w === "narrow" || w === "normal" || w === "wide") root.setAttribute("data-width", w);
+        } catch (e) {}
+      })();
+    </script>
+    <title>Margin Docs</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

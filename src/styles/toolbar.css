@@ -1,0 +1,321 @@
+/* Layered on top of .editor-toolbar, .tool, .tool-sep and .tool-wrap in app.css. The pill itself
+   and its separators are picked up again at the bottom of this file, where the fit at the app's
+   minimum window width is dealt with; everything between here and there is the popovers and the
+   save indicator, which app.css knows nothing about. */
+
+.link-pop-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 6;
+}
+
+.heading-pop,
+.link-pop,
+.callout-pop,
+.table-pop,
+.insert-pop,
+.lang-pop {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 7;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop);
+}
+
+/* These three hang off tools in the right hand half of a pill that is nearly as wide as the pane,
+   and .editor-pane clips horizontally, so a left anchored menu on any of them would lose its right
+   half. They hang from the same edge their tool does instead. */
+.table-pop,
+.insert-pop,
+.lang-pop {
+  left: auto;
+  right: 0;
+}
+
+.heading-pop,
+.callout-pop,
+.insert-pop {
+  display: flex;
+  flex-direction: column;
+  min-width: 168px;
+  padding: 5px;
+}
+
+.pop-item {
+  width: 100%;
+  padding: 8px 11px;
+  text-align: left;
+  border-radius: var(--r-sm);
+  font-family: var(--font-ui);
+  font-size: var(--t-3);
+  color: var(--ink-soft);
+  transition: background 120ms var(--ease), color 120ms var(--ease);
+}
+
+.pop-item:hover {
+  background: var(--accent-wash);
+  color: var(--ink);
+}
+
+.pop-item[data-on="true"] {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.pop-item.danger:hover {
+  background: var(--danger-wash);
+  color: var(--danger);
+}
+
+.link-pop {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 280px;
+  padding: 6px;
+}
+
+.link-input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 9px;
+  background: var(--shell);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--t-3);
+  transition: border-color 120ms var(--ease);
+}
+
+.link-input:focus {
+  outline: none;
+  border-color: var(--line-strong);
+}
+
+.link-btn {
+  padding: 7px 12px;
+  border-radius: var(--r-sm);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-family: var(--font-ui);
+  font-size: var(--t-3);
+  white-space: nowrap;
+  transition: background 120ms var(--ease), opacity 120ms var(--ease);
+}
+
+.link-btn:hover {
+  opacity: 0.85;
+}
+
+.link-btn.ghost {
+  padding: 7px 8px;
+  background: none;
+  color: var(--ink-faint);
+}
+
+.link-btn.ghost:hover {
+  background: var(--danger-wash);
+  color: var(--danger);
+  opacity: 1;
+}
+
+/* The table popover, which is two menus in one tool: a size grid outside a table and the row,
+   column and alignment ops inside one. The ops are laid out in short horizontal rows rather than
+   as twelve stacked items, because a stack that tall would run off the top of a short window. */
+.table-pop {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+}
+
+.table-pop[data-mode="edit"] {
+  min-width: 216px;
+}
+
+.pop-label {
+  padding: 5px 5px 2px;
+  font-family: var(--font-ui);
+  font-size: var(--t-1);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.pop-row {
+  display: flex;
+  gap: 3px;
+}
+
+.pop-btn {
+  flex: 1;
+  padding: 7px 6px;
+  border-radius: var(--r-sm);
+  font-family: var(--font-ui);
+  font-size: var(--t-2);
+  color: var(--ink-soft);
+  white-space: nowrap;
+  transition: background 120ms var(--ease), color 120ms var(--ease);
+}
+
+.pop-btn:hover {
+  background: var(--accent-wash);
+  color: var(--ink);
+}
+
+.pop-btn.danger:hover {
+  background: var(--danger-wash);
+  color: var(--danger);
+}
+
+.size-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 18px);
+  gap: 3px;
+  padding: 4px 5px 6px;
+}
+
+.size-cell {
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  transition: background 120ms var(--ease), border-color 120ms var(--ease);
+}
+
+.size-cell[data-on="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.size-cell:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.size-label {
+  padding: 0 5px 4px;
+  font-family: var(--font-ui);
+  font-size: var(--t-2);
+  color: var(--ink-faint);
+  text-align: center;
+}
+
+/* The fence language picker. The input comes first because it is the one control that can say
+   anything a fence can, and the chips under it are only the shortcuts. */
+.lang-pop {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 272px;
+  padding: 6px;
+}
+
+.lang-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lang-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  padding: 0 1px;
+}
+
+.lang-chip {
+  padding: 5px 9px;
+  border-radius: var(--r-pill);
+  background: var(--shell);
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: var(--t-1);
+  transition: background 120ms var(--ease), color 120ms var(--ease);
+}
+
+.lang-chip:hover {
+  background: var(--accent-wash);
+  color: var(--ink);
+}
+
+.lang-chip[data-on="true"] {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.toolbar-status {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  padding-left: 4px;
+}
+
+.toolbar-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--ink-faint);
+  animation: toolbar-save-pulse 1.4s var(--ease) infinite;
+}
+
+@keyframes toolbar-save-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.toolbar-status-conflict {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-pill);
+  color: var(--danger);
+  transition: background 120ms var(--ease);
+}
+
+.toolbar-status-conflict:hover {
+  background: var(--danger-wash);
+}
+
+/* The pill against the window it has to live in.
+ *
+ * .editor-pane centres the pill rather than stretching it, so the pill is as wide as its contents
+ * and nothing stops it growing past the pane and being cut off by that pane's overflow-x: hidden.
+ * The save indicator is the last thing in it, so what a too narrow window loses is the one control
+ * that says the file changed underneath you. Capping the width and letting it wrap is the floor:
+ * below the app's own 880px minimum, which the phone layout and the browser build both go under,
+ * the pill becomes two rows instead of a row with its end missing. */
+.editor-toolbar {
+  max-width: 100%;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* At 880px the pane is 632px and the pill wants 636px of it. Every tool is already at its floor,
+   so what gives is the air around the separators, which is the only space in the pill that is not
+   something to press. */
+:root[data-compact] .tool-sep {
+  margin: 0 2px;
+}
+
+/* And the same again for the tools themselves, once the pill grew a seventeenth one. A tool is
+   32px wide with 9px of padding either side, which at 880px is four pixels more than the pane has:
+   the pill wraps to two rows and the row that ends up on top sits over the last line of the
+   document. Two pixels off each tool is the whole of it, and the press target stays comfortably
+   above the 30px a finger needs. Above 880px nothing here applies and the tools are the size they
+   have always been. */
+:root[data-compact] .tool {
+  min-width: 30px;
+  padding: 0 8px;
+}

@@ -1,0 +1,168 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, e.g. 0.2.0. Leave empty to bump the patch number."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      release_id: ${{ steps.release.outputs.release_id }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+            VERSION="${VERSION#v}"
+          else
+            CURRENT=$(jq -r .version src-tauri/tauri.conf.json)
+            IFS=. read -r MAJOR MINOR PATCH <<< "$CURRENT"
+            VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing v$VERSION"
+
+      - name: Bump version in manifests
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          tmp=$(mktemp)
+          jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > "$tmp" && mv "$tmp" src-tauri/tauri.conf.json
+          jq --arg v "$VERSION" '.version = $v' package.json > "$tmp" && mv "$tmp" package.json
+          sed -i "0,/^version = \".*\"/s//version = \"$VERSION\"/" src-tauri/Cargo.toml
+
+      - name: Commit and tag
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add src-tauri/tauri.conf.json package.json src-tauri/Cargo.toml
+          git commit -m "chore(release): $TAG"
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            git rebase origin/main
+            if git push origin HEAD; then
+              break
+            fi
+            if [ "$attempt" = "5" ]; then
+              echo "::error::main kept advancing; could not push release bump after 5 attempts."
+              exit 1
+            fi
+            echo "main advanced during release; rebasing and retrying ($attempt)…"
+            sleep 3
+          done
+          git tag "$TAG"
+          git push origin "$TAG"
+
+      - name: Create draft release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release create "$TAG" --draft --title "Margin Docs $TAG" --notes "Release $TAG"
+          ID=$(gh release view "$TAG" --json databaseId --jq .databaseId)
+          echo "release_id=$ID" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-26
+            args: "--target universal-apple-darwin --config src-tauri/tauri.release.conf.json"
+            rust-targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+          # Ubuntu 22.04 is the glibc baseline: the bundle will not run on anything older than the
+          # glibc it was linked against, so build on the oldest supported.
+          - os: ubuntu-22.04
+            args: "--config src-tauri/tauri.release.conf.json"
+            rust-targets: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Install Linux dependencies
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libxdo-dev \
+            libssl-dev \
+            build-essential \
+            curl \
+            wget \
+            file
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and upload
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          releaseId: ${{ needs.prepare.outputs.release_id }}
+          args: ${{ matrix.args }}
+
+  publish:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify manifest is complete, then publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          gh release download "$TAG" --repo "$REPO" --pattern latest.json --output latest.json --clobber
+          echo "Platforms in latest.json:"
+          jq '.platforms | keys' latest.json
+          for key in darwin-aarch64 darwin-x86_64 linux-x86_64; do
+            if ! jq -e ".platforms[\"$key\"].url" latest.json > /dev/null; then
+              echo "::error::latest.json is missing platform '$key': refusing to publish a partial update manifest. Re-run the release."
+              exit 1
+            fi
+          done
+          gh release edit "$TAG" --repo "$REPO" --draft=false --latest

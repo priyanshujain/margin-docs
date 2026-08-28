@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="en" data-theme="light" data-traffic>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Margin Docs type specimen</title>
+
+    <link rel="stylesheet" href="./tokens.css" />
+    <link rel="stylesheet" href="./app.css" />
+    <link rel="stylesheet" href="./sheet.css" />
+    <link rel="stylesheet" href="./prose.css" />
+
+    <style>
+      /* fonts.css points at /fonts, which only resolves when Vite is serving. The relative source
+         comes first so this file also works from any plain static server rooted at the repo. */
+      @font-face {
+        font-family: "Hanken Grotesk";
+        src:
+          url("../../public/fonts/HankenGrotesk-VF.ttf") format("truetype-variations"),
+          url("/fonts/HankenGrotesk-VF.ttf") format("truetype-variations");
+        font-weight: 100 900;
+        font-style: normal;
+      }
+      @font-face {
+        font-family: "Literata";
+        src:
+          url("../../public/fonts/Literata-VF.ttf") format("truetype-variations"),
+          url("/fonts/Literata-VF.ttf") format("truetype-variations");
+        font-weight: 200 900;
+        font-style: normal;
+      }
+      @font-face {
+        font-family: "Literata";
+        src:
+          url("../../public/fonts/Literata-Italic-VF.ttf") format("truetype-variations"),
+          url("/fonts/Literata-Italic-VF.ttf") format("truetype-variations");
+        font-weight: 200 900;
+        font-style: italic;
+      }
+
+      /* Fixture chrome only. Nothing below this line ships. */
+      .preview-bar {
+        position: fixed;
+        top: 10px;
+        right: 12px;
+        z-index: 60;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 5px;
+        background: var(--glass);
+        -webkit-backdrop-filter: blur(10px);
+        backdrop-filter: blur(10px);
+        border: 1px solid var(--line);
+        border-radius: var(--r-pill);
+        box-shadow: var(--shadow-pop);
+        font-family: var(--font-ui);
+        font-size: var(--t-2);
+      }
+      .preview-bar button {
+        padding: 5px 11px;
+        border-radius: var(--r-pill);
+        color: var(--ink-soft);
+      }
+      .preview-bar button[data-on="true"] {
+        background: var(--accent);
+        color: var(--accent-contrast);
+      }
+      .preview-sep {
+        width: 1px;
+        height: 16px;
+        background: var(--line);
+        margin: 0 4px;
+      }
+      .preview-note {
+        margin: 0 0 2.6em;
+        padding: 0.85em 1.05em;
+        border: 1px dashed var(--line-strong);
+        border-radius: var(--r-md);
+        font-family: var(--font-ui);
+        font-size: var(--t-2);
+        line-height: 1.6;
+        color: var(--ink-faint);
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="preview-bar">
+      <button data-theme-set="light" data-on="true">Light</button>
+      <button data-theme-set="dark">Dark</button>
+      <div class="preview-sep"></div>
+      <button data-width-set="narrow">Narrow</button>
+      <button data-width-set="normal" data-on="true">Normal</button>
+      <button data-width-set="wide">Wide</button>
+    </div>
+
+    <div id="root">
+      <div class="app">
+        <div class="titlebar">
+          <div class="lead"></div>
+          <div class="doc-title">architecture.md</div>
+          <div class="actions"></div>
+        </div>
+        <div class="stage">
+          <div class="editor-pane">
+            <div class="sheet"><div class="prose"></div></div>
+            <div class="editor-toolbar">
+              <button class="tool" data-on="true"><strong>B</strong></button>
+              <button class="tool"><em>I</em></button>
+              <button class="tool"><s>S</s></button>
+              <div class="tool-sep"></div>
+              <button class="tool">H1</button>
+              <button class="tool">H2</button>
+              <button class="tool">H3</button>
+              <div class="tool-sep"></div>
+              <button class="tool">List</button>
+              <button class="tool">Quote</button>
+              <button class="tool">Code</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!--
+      The document, written as the schema's toDOM writes it. It goes through a template and a
+      whitespace pass on the way in because .prose is white-space: break-spaces, the way every
+      ProseMirror surface is, and ProseMirror never emits the indentation a human writing HTML
+      does. Without the pass, every newline in this file would be a blank line on the page.
+    -->
+    <template id="document">
+      <p class="preview-note">
+        Static specimen. The markup is what src/model/schema.ts emits from toDOM, so every selector
+        in prose.css is exercised against the document that will really be on screen.
+      </p>
+
+      <h1>Heading one, the document title</h1>
+      <p>
+        A paragraph of body text at the document size, set ragged right rather than justified. The
+        measure comes from the width menu in the corner, and the same paragraph has to read
+        correctly at all three settings, which is one of the reasons the justification and
+        hyphenation this palette arrived with were left behind. A line can carry
+        <strong>bold</strong>, <em>italic</em>, <s>struck out text</s>, a <code>code span</code>, a
+        <a href="./setup.md">relative link to another document</a>, and a bare URL such as
+        <a href="https://example.com/a/very/long/path/with/no/obvious/break/points/in/it"
+          >https://example.com/a/very/long/path/with/no/obvious/break/points/in/it</a
+        >
+        which has to wrap inside the measure instead of pushing the page sideways.
+      </p>
+
+      <h2>Heading two, a section</h2>
+      <p>
+        Size carries the first three levels. From the fourth down there is no size left to spend, so
+        the scale changes signal instead: weight, then typeface, then case.
+      </p>
+
+      <h3>Heading three, a subsection</h3>
+      <p>
+        Still the book face and still semibold, one step above the body and clearly below the
+        section that contains it.
+      </p>
+
+      <h4>Heading four, body size and bold</h4>
+      <p>
+        Here a heading is the same size as the text under it, and the weight plus the space above it
+        is what makes it a heading rather than a bold sentence.
+      </p>
+
+      <h5>Heading five, the UI face</h5>
+      <p>
+        Changing family is the strongest signal left once size and weight are spent, and by level
+        five a heading has stopped being a title and become a label.
+      </p>
+
+      <h6>Heading six, a label</h6>
+      <p>
+        Uppercase, tracked out, secondary ink, and the smallest thing on the page that is still a
+        heading. Six levels, none of them ambiguous against its neighbour.
+      </p>
+
+      <hr />
+
+      <h2>Lists</h2>
+      <p>A tight list, which is what a markdown list with no blank lines between items is:</p>
+      <ul>
+        <li>
+          <p>First item at depth one</p>
+          <ul>
+            <li>
+              <p>Depth two takes a hollow marker</p>
+              <ul>
+                <li>
+                  <p>Depth three takes a square</p>
+                  <ul>
+                    <li>
+                      <p>Depth four, where the cycle restarts and the indent disambiguates</p>
+                      <ul>
+                        <li><p>Depth five, still inside the measure at the narrow setting</p></li>
+                      </ul>
+                    </li>
+                  </ul>
+                </li>
+                <li><p>A sibling back at depth three</p></li>
+              </ul>
+            </li>
+          </ul>
+        </li>
+        <li><p>Second item at depth one</p></li>
+        <li><p>Third item at depth one</p></li>
+      </ul>
+
+      <p>The same list loose, meaning the source has a blank line between the items:</p>
+      <ul data-loose>
+        <li>
+          <p>
+            A loose item gets its paragraph spacing back, which is the difference the file on disk
+            is actually making.
+          </p>
+        </li>
+        <li>
+          <p>A loose item can hold more than one paragraph.</p>
+          <p>Like this one, whose second paragraph is spaced rather than run on.</p>
+        </li>
+        <li><p>And a third.</p></li>
+      </ul>
+
+      <p>Ordered lists stay decimal at every depth, and a start attribute is honoured:</p>
+      <ol start="8">
+        <li>
+          <p>Eight</p>
+          <ol>
+            <li>
+              <p>Nested, and still numbered, because that is what the file says</p>
+              <ol>
+                <li><p>Three deep</p></li>
+                <li><p>And its sibling</p></li>
+              </ol>
+            </li>
+          </ol>
+        </li>
+        <li><p>Nine</p></li>
+        <li><p>Ten, whose figures line up with the two above it</p></li>
+      </ol>
+
+      <p>Task lists, checked and not:</p>
+      <ul class="task-list" data-task-list>
+        <li class="task-item" data-checked="true"><p>Freeze the DTO contract and the IPC mirror</p></li>
+        <li class="task-item" data-checked="true">
+          <p>
+            A done item that runs to more than one line, so the drop to secondary ink can be judged
+            against a real block of text rather than against four words.
+          </p>
+        </li>
+        <li class="task-item" data-checked="false">
+          <p>Wire the width menu to the root attribute</p>
+          <ul class="task-list" data-task-list>
+            <li class="task-item" data-checked="false"><p>Nested, unchecked</p></li>
+            <li class="task-item" data-checked="true"><p>Nested, checked</p></li>
+          </ul>
+        </li>
+      </ul>
+
+      <p>A mixed list, which GFM allows and the schema models as a bullet list holding both kinds of item:</p>
+      <ul>
+        <li><p>An ordinary item</p></li>
+        <li class="task-item" data-checked="false"><p>A checkbox item, text edge unmoved</p></li>
+        <li class="task-item" data-checked="true"><p>A checked item, text edge unmoved</p></li>
+        <li><p>An ordinary item again</p></li>
+      </ul>
+
+      <hr />
+
+      <h2>Code</h2>
+      <p>
+        Inline code such as <code>roots_list</code>, <code>Result&lt;T, String&gt;</code> and
+        <code>--code-surface</code> sits inside the line box, so a paragraph carrying three of them
+        keeps the leading of the one above it. A fenced block with a language:
+      </p>
+      <pre data-language="rust"><code>#[tauri::command(async)]
+pub fn file_write(path: String, text: String, expected_modified_ms: Option&lt;i64&gt;) -&gt; Result&lt;WriteResult, String&gt; {
+    // Long lines scroll rather than wrap: rewrapping a fence at a column the file knows nothing about stops it reading as code.
+    Err("not implemented".to_string())
+}</code></pre>
+
+      <p>And one with no language, which reserves no room for a label:</p>
+      <pre><code>$ cargo check --all-targets
+    Finished dev [unoptimized + debuginfo] target(s) in 0.31s</code></pre>
+
+      <p>
+        Markdown the editor cannot model is kept byte for byte and shown as a raw block, which has
+        to be legible as source and obviously not a fence:
+      </p>
+      <pre class="raw-block" data-raw><code>&lt;figure class="wide"&gt;
+  &lt;img src="./assets/diagram.png" alt="the index" /&gt;
+  &lt;figcaption&gt;Something the schema has no node for&lt;/figcaption&gt;
+&lt;/figure&gt;</code></pre>
+
+      <hr />
+
+      <h2>Quotes and callouts</h2>
+      <blockquote>
+        <p>
+          A quote is not italic here. In a technical document it is as likely to be a paragraph of a
+          spec or somebody's bug report as it is an epigraph, and neither of those wants to be set
+          in italic.
+        </p>
+        <blockquote>
+          <p>A quote inside a quote, which is a reply, and it keeps full legibility.</p>
+          <blockquote>
+            <p>Three levels deep, the bars and the indents carrying the depth.</p>
+          </blockquote>
+        </blockquote>
+        <p>Back at the first level, after the nesting closes.</p>
+      </blockquote>
+
+      <blockquote>
+        <p>A quote can hold other blocks:</p>
+        <ul>
+          <li><p>A list</p></li>
+          <li><p>Inside a quote</p></li>
+        </ul>
+        <pre data-language="sh"><code>git status --porcelain</code></pre>
+      </blockquote>
+
+      <div class="callout" data-callout="note">
+        <p>Opening a file never writes it. The first edit rewrites it in one house style, and every save after that is byte stable.</p>
+      </div>
+      <div class="callout" data-callout="tip">
+        <p>The width menu has three steps, and wide exists for documents that are mostly tables.</p>
+      </div>
+      <div class="callout" data-callout="important">
+        <p>Filename and H1 are unrelated. Nothing renames a file behind the user's back.</p>
+      </div>
+      <div class="callout" data-callout="warning">
+        <p>A construct with no node becomes a raw block rather than being reformatted into the nearest thing the editor understands.</p>
+      </div>
+      <div class="callout" data-callout="caution">
+        <p>Deletions go through the trash, never an unlink. These are the user's own files.</p>
+      </div>
+
+      <details class="toggle" open>
+        <summary>A toggle, open</summary>
+        <div data-toggle-body>
+          <p>A details element on disk. The summary is an attribute rather than a child node, so it is plain text and a summary carrying markup belongs in a raw block.</p>
+        </div>
+      </details>
+
+      <details class="toggle">
+        <summary>A toggle, closed</summary>
+        <div data-toggle-body><p>Hidden until the marker is turned.</p></div>
+      </details>
+
+      <hr />
+
+      <h2>Tables</h2>
+      <p>Wrapped, so the table is full width and its cells wrap:</p>
+      <div class="table-wrap">
+        <table>
+          <tbody>
+            <tr>
+              <th>Command</th>
+              <th data-align="center">Async</th>
+              <th data-align="right">Calls</th>
+            </tr>
+            <tr>
+              <td><code>file_read</code></td>
+              <td data-align="center">yes</td>
+              <td data-align="right">1284</td>
+            </tr>
+            <tr>
+              <td><code>file_write</code></td>
+              <td data-align="center">yes</td>
+              <td data-align="right">97</td>
+            </tr>
+            <tr>
+              <td><code>reveal_in_finder</code></td>
+              <td data-align="center">no</td>
+              <td data-align="right">6</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Wider than the measure, so it scrolls inside itself and the page does not:</p>
+      <div class="table-wrap">
+        <table>
+          <tbody>
+            <tr>
+              <th>Token</th>
+              <th>Light</th>
+              <th>Dark</th>
+              <th>Used by</th>
+              <th>Replaces</th>
+              <th data-align="right">Delta L*</th>
+            </tr>
+            <tr>
+              <td><code>--doc-rule</code></td>
+              <td><code>#e3ddce</code></td>
+              <td><code>#35302a</code></td>
+              <td>table rules, callout border, figure border</td>
+              <td><code>--line</code></td>
+              <td data-align="right">10.4</td>
+            </tr>
+            <tr>
+              <td><code>--doc-rule-strong</code></td>
+              <td><code>#cdc4ae</code></td>
+              <td><code>#4a4339</code></td>
+              <td>quote bar, horizontal rule, checkbox, raw fence</td>
+              <td><code>--line-strong</code></td>
+              <td data-align="right">19.3</td>
+            </tr>
+            <tr>
+              <td><code>--code-surface</code></td>
+              <td><code>#f2ece0</code></td>
+              <td><code>#282521</code></td>
+              <td>fenced blocks and maths blocks</td>
+              <td><code>--shell</code>, <code>--raised</code></td>
+              <td data-align="right">5.0</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Bare, with no wrapper, which is the fallback shape and hugs its content:</p>
+      <table>
+        <tbody>
+          <tr>
+            <th>Step</th>
+            <th data-align="right">Measure</th>
+          </tr>
+          <tr>
+            <td>Narrow</td>
+            <td data-align="right">494px</td>
+          </tr>
+          <tr>
+            <td>Normal</td>
+            <td data-align="right">598px</td>
+          </tr>
+          <tr>
+            <td>Wide</td>
+            <td data-align="right">728px</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <hr />
+
+      <h2>Images and maths</h2>
+      <p>
+        <span class="figure">
+          <img
+            alt="A placeholder figure"
+            src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='760' height='300'%3E%3Crect width='760' height='300' fill='%23d8d0bd'/%3E%3Cg fill='none' stroke='%236b6458' stroke-width='2'%3E%3Crect x='60' y='60' width='200' height='90' rx='8'/%3E%3Crect x='500' y='60' width='200' height='90' rx='8'/%3E%3Crect x='280' y='170' width='200' height='90' rx='8'/%3E%3Cpath d='M160 150 L360 170 M600 150 L400 170'/%3E%3C/g%3E%3C/svg%3E"
+          /><span class="figure-caption">A lone image is a paragraph with one child. The caption is a hook the image node view fills, because CSS cannot read an attribute off an img.</span>
+        </span>
+      </p>
+
+      <p>An image with no caption, which still gets the figure treatment:</p>
+      <p>
+        <img
+          alt="A second placeholder figure"
+          src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='520' height='170'%3E%3Crect width='520' height='170' fill='%23cfc6b1'/%3E%3Cg fill='none' stroke='%236b6458' stroke-width='2'%3E%3Ccircle cx='150' cy='85' r='45'/%3E%3Ccircle cx='370' cy='85' r='45'/%3E%3Cpath d='M195 85 L325 85'/%3E%3C/g%3E%3C/svg%3E"
+        />
+      </p>
+
+      <p>Inline maths such as <span class="math-inline" data-latex="e^{i\pi}+1=0">e^{i\pi}+1=0</span> and a block of it:</p>
+      <div class="math-block" data-math-block data-latex="\int_0^1 x^2 dx = \tfrac{1}{3}">\int_0^1 x^2 dx = \tfrac{1}{3}</div>
+
+      <h2>Find, and the empty state</h2>
+      <p>
+        Find paints inline decorations over live text, so every
+        <span class="search-match">match</span> takes a wash and the one the caret is on takes the
+        ink, which has to stay legible when the real selection lands on top of a
+        <span class="search-match search-match-current">match</span> as well.
+      </p>
+      <p data-placeholder="Start writing"><br /></p>
+    </template>
+
+    <script>
+      /* Every run of whitespace collapses to one space and every whitespace-only text node goes,
+         which is what ProseMirror's own output looks like. The rule for anyone editing the
+         template above: a space between two inline elements has to live in a text node with real
+         text in it, because a newline on its own will not survive. Anything inside a <pre> is left
+         exactly as written. */
+      function normalise(root) {
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        const texts = [];
+        for (let n = walker.nextNode(); n; n = walker.nextNode()) texts.push(n);
+        for (const node of texts) {
+          if (node.parentElement && node.parentElement.closest("pre")) continue;
+          if (!node.nodeValue.trim()) {
+            node.remove();
+            continue;
+          }
+          let text = node.nodeValue.replace(/\s+/g, " ");
+          if (!node.previousSibling) text = text.replace(/^ /, "");
+          if (!node.nextSibling) text = text.replace(/ $/, "");
+          node.nodeValue = text;
+        }
+      }
+
+      const fragment = document.getElementById("document").content.cloneNode(true);
+      normalise(fragment);
+      document.querySelector(".prose").append(fragment);
+
+      const root = document.documentElement;
+      const wire = (attribute, apply) => {
+        const buttons = document.querySelectorAll("[" + attribute + "]");
+        for (const button of buttons) {
+          button.addEventListener("click", () => {
+            apply(button.getAttribute(attribute));
+            for (const other of buttons) other.dataset.on = String(other === button);
+          });
+        }
+      };
+      wire("data-theme-set", (value) => root.setAttribute("data-theme", value));
+      wire("data-width-set", (value) => root.setAttribute("data-width", value));
+    </script>
+  </body>
+</html>

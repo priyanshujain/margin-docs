@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - run: pnpm install --frozen-lockfile
+
+      # `pnpm build` is tsc then vite, so this is the typecheck and the bundle in one step.
+      - run: pnpm build
+
+      - run: pnpm test
+
+  rust:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libxdo-dev \
+            libssl-dev \
+            build-essential
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      # tauri_build::build() wants a frontendDist that exists. The example file is what a fresh
+      # clone compiles against, so that is what CI uses.
+      - name: Stub the build inputs
+        run: mkdir -p dist && touch dist/index.html
+
+      - name: Test
+        working-directory: src-tauri
+        run: cargo test

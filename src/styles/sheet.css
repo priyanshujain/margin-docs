@@ -1,0 +1,59 @@
+/* The page a document sits on: the scroller, the measure, and the three widths.
+ *
+ * .editor-pane is the scroll container and .sheet is the single column inside it, centred by the
+ * pane rather than by auto margins so the sticky toolbar can be a sibling of the sheet and still
+ * land in the middle of the pane. Typography lives in prose.css; nothing here sets a font. */
+
+.editor-pane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: var(--paper);
+  overflow-y: auto;
+  /* Nothing inside the document is allowed to scroll the page sideways: a table or a fenced block
+     too wide for the measure scrolls inside itself, and this is the backstop for anything that
+     escapes anyway. */
+  overflow-x: hidden;
+}
+
+/* Growing rather than hugging its content keeps the sticky toolbar at the bottom of the window
+   when the document is one line long, without the toolbar needing a rule of its own here. */
+.sheet {
+  flex: 1 0 auto;
+  width: 100%;
+  min-width: 0;
+  max-width: var(--measure);
+  padding: var(--sheet-pad-t) var(--sheet-pad-x) var(--sheet-pad-b);
+}
+
+/* EditorContent's wrapper. It exists only to hold the editable and must not become a second box
+   with opinions between the sheet and the document. */
+.editor-host {
+  min-width: 0;
+}
+
+.editor-host:focus-visible {
+  outline: none;
+}
+
+/* The measure is in em against the shell's 13px, which is what --measure has always meant in this
+   palette, so the three steps are 494px, 598px and 728px whatever the document's own size is.
+   Narrow is a comfortable 58 characters of prose, normal is 70, and wide exists for the documents
+   that are mostly tables and fenced blocks rather than for reading. */
+:root[data-width="narrow"] .sheet {
+  max-width: var(--measure-narrow);
+}
+
+:root[data-width="wide"] .sheet {
+  max-width: var(--measure-wide);
+}
+
+/* The toolbar pill floats over the end of the document, so the last paragraph needs to be able to
+   scroll clear of it: roughly 96px of pill and its inset, plus enough that the final line is not
+   sitting right on top of the chrome. */
+:root[data-compact] .sheet {
+  padding: var(--sheet-pad-t-compact) var(--sheet-pad-x-compact) var(--sheet-pad-b);
+}

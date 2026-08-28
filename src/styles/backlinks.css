@@ -1,0 +1,112 @@
+/* The "Linked from" section, drawn after the last block of the document.
+ *
+ * It is rendered inside .sheet, so the paper, the measure and the three widths are already decided
+ * and nothing here touches them: sheet.css owns that box and this only fills the bottom of it. What
+ * is here is the clearance that keeps the section off the end of the prose, and a type treatment
+ * that reads as chrome rather than as a last paragraph, which is mostly the UI face standing against
+ * the document's book face.
+ *
+ * Nothing in here is allowed to move the text above it. The section arrives a beat after the
+ * document, so it fades and never slides, and it reserves no space while it is undecided: it is
+ * drawn below the last line, so arriving late grows the page downwards and leaves the writer's line
+ * exactly where it was.
+ *
+ * There is no icon down the left. The heading already says what the list is, and a column of
+ * identical glyphs under a page of prose is the sort of chrome this app spends its restraint on. */
+
+:root {
+  /* The gap between the last block and the rule. Enough that the section reads as coming after the
+     document rather than as its final paragraph, and a property rather than a number because
+     compact sets it again below. */
+  --backlinks-clearance: 54px;
+}
+
+:root[data-compact] {
+  --backlinks-clearance: 38px;
+}
+
+.backlinks {
+  margin-top: var(--backlinks-clearance);
+  padding-top: 18px;
+  /* --doc-rule and not --line: this hairline has paper on both sides, which is the case tokens.css
+     drew the document rules for. */
+  border-top: 1px solid var(--doc-rule);
+
+  /* Chrome that happens to live below the text. A drag running off the end of the last paragraph
+     stops at the end of the document instead of sweeping the section into the clipboard; a select
+     all inside the editor never had it in the first place. */
+  user-select: none;
+  -webkit-user-select: none;
+
+  animation: backlinks-in 160ms var(--ease);
+}
+
+/* Opacity only. Anything that moved would move the page under somebody mid sentence, which is the
+   whole thing this section is trying not to do. */
+@keyframes backlinks-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* The label is the sidebar's, because "Linked from" under a document and "Recent" on the start
+   screen are the same quiet kind of heading. Only the padding is local: nav-label is spaced for a
+   sidebar gutter and this one sits against the measure. */
+.backlinks .nav-label {
+  padding: 0 0 4px;
+}
+
+/* The bleed and the row padding are one pair: the text lines up with the prose edge above it while
+   the hover wash reaches past it on both sides. */
+.backlinks-list {
+  margin: 0 -10px;
+  padding: 0;
+  list-style: none;
+}
+
+.backlinks-row {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: var(--r-sm);
+  text-align: left;
+  transition: background 120ms var(--ease);
+}
+
+.backlinks-row:hover {
+  background: var(--accent-wash);
+}
+
+/* A finger needs a target even where a pointer does not. */
+:root[data-touch] .backlinks-row {
+  min-height: var(--touch-h);
+}
+
+/* Both lines are clamped to one, so the section's height is the row count and nothing else: a
+   document linked to from a very long line does not get a taller section than its neighbour. */
+.backlinks-title,
+.backlinks-snippet {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.backlinks-title {
+  font-size: var(--t-4);
+  color: var(--ink);
+}
+
+.backlinks-snippet {
+  margin-top: 1px;
+  font-size: var(--t-2);
+  color: var(--ink-faint);
+  transition: color 120ms var(--ease);
+}
+
+.backlinks-row:hover .backlinks-snippet {
+  color: var(--ink-soft);
+}

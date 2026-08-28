@@ -1,0 +1,12 @@
+<svg width="350" height="350" viewBox="0 0 350 350" fill="none" xmlns="http://www.w3.org/2000/svg">
+<!-- Margin Docs mark: a page with a margin rule. Glyph only, matching margin's logo-dark.svg conventions.
+     App icon composition on a 512 canvas: squircle rect x=49 y=49 w=414 h=414 rx=92.5 fill #0d0c0a,
+     then this glyph under transform="translate(56,48) scale(1.142857142857)".
+     That scale puts every stroke centreline on a pixel centre at 32x32, and lifts the glyph 8px
+     above the geometric centre for optical balance. -->
+<rect x="70" y="35" width="210" height="280" rx="14" stroke="#fcfbf7" stroke-width="10"/>
+<rect x="93" y="72" width="10" height="206" rx="5" fill="#fcfbf7"/>
+<rect x="135" y="100" width="122" height="10" rx="5" fill="#fcfbf7"/>
+<rect x="135" y="170" width="122" height="10" rx="5" fill="#fcfbf7"/>
+<rect x="135" y="240" width="80" height="10" rx="5" fill="#fcfbf7"/>
+</svg>

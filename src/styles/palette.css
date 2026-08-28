@@ -1,0 +1,172 @@
+/* The three overlay palettes: quick open, find in files and the command palette. One widget with
+   three sources, so one sheet, and the rows differ only in what they put inside .palette-row.
+
+   The backdrop and the panel are app.css's own .overlay and .panel, borrowed rather than reproduced
+   here. A palette is the same card as the shortcuts sheet; it only sits higher up the window,
+   because a list that grows downwards from under the field should not shift the field itself every
+   time the index answers. That is the whole of what data-align="top" says. */
+
+.overlay[data-align="top"] {
+  align-items: start;
+  padding-top: 12vh;
+}
+
+.palette {
+  width: min(620px, calc(100vw - 32px));
+  max-height: min(60vh, 520px);
+  animation: palette-drop 120ms var(--ease);
+}
+
+@keyframes palette-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.palette-field {
+  flex: none;
+  height: 48px;
+  padding: 0 18px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--t-5);
+}
+
+.palette-field::placeholder {
+  color: var(--ink-faint);
+}
+
+/* The field is the only thing in the panel that can hold focus, and the panel is already a ring of
+   its own against the scrim, so the outline would draw a second border a pixel inside the first. */
+.palette-field:focus {
+  outline: none;
+}
+
+.palette-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+/* No transition on the selection. It follows the arrow key, and a fade turns a held-down arrow
+   into a smear of half-lit rows instead of a cursor moving down a list. */
+.palette-row {
+  padding: 7px 12px;
+  border-radius: var(--r-sm);
+  color: var(--ink-soft);
+  cursor: default;
+}
+
+.palette-row[data-selected="true"] {
+  background: var(--accent-wash);
+  color: var(--ink);
+}
+
+.palette-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.palette-main {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+/* Both halves of a row shrink, and both truncate. A long filename must not push the path it sits
+   at off the end of the row, and a deep path must not push the filename. */
+.palette-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--ink);
+  font-size: var(--t-3);
+}
+
+.palette-where {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--t-2);
+  color: var(--ink-faint);
+}
+
+.palette-root {
+  flex: none;
+  font-size: var(--t-1);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.palette-line {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--t-1);
+  color: var(--ink-faint);
+}
+
+.palette-snippet {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--t-2);
+  color: var(--ink-soft);
+}
+
+.palette-keys {
+  flex: none;
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+
+/* .key-cap is drawn on paper with the same wash the selected row uses, so on that row it would be
+   an invisible rectangle. It comes back off the paper instead. */
+.palette-row[data-selected="true"] .key-cap {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* A fuzzy match lands on scattered single characters, so the matched run is weighted rather than
+   boxed: a dozen little highlighter blocks down one path read as noise, not as a match. */
+.palette-mark {
+  background: none;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* A full text match is one contiguous run of the words that were typed, which is few enough boxes
+   to be worth drawing. */
+.palette-snippet .palette-mark {
+  padding: 0 2px;
+  border-radius: var(--r-sm);
+  background: var(--accent-wash);
+}
+
+.palette-status {
+  margin: 0;
+  padding: 18px;
+  font-size: var(--t-2);
+  color: var(--ink-faint);
+}
+
+.palette-status[data-error="true"] {
+  color: var(--danger);
+}

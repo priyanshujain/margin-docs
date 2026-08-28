@@ -1,0 +1,111 @@
+/* Mermaid diagrams: the block a ```mermaid fence is drawn in.
+ *
+ * Import after prose.css. Everything here is inside `.prose` and a couple of rules deliberately
+ * beat the plain code block styling that file gives a `pre`, which on a tie is decided by source
+ * order.
+ *
+ * The picture and the source are both always in the DOM, because the source is the document's own
+ * content and this file is only allowed to decide which of the two is on screen. That decision is
+ * `data-state` on the block, written by the node view in src/editor/blocks/mermaid.ts:
+ *
+ *   empty    nothing to draw yet, so the fence is the block
+ *   source   the caret is inside, so the user is looking at what they are typing
+ *   pending  a first render is in flight and there is nothing drawn to keep showing
+ *   diagram  drawn, and `data-busy` while a newer one is on its way
+ *   error    mermaid refused it, so the message and the fence are shown together
+ *
+ * Colours, radii and type all come from the token layer, so both themes follow `data-theme` on the
+ * root without a palette of their own down here. Spacing is in em against the document's own size,
+ * which is how the rest of prose.css measures a block. */
+
+.prose .mermaid-block {
+  margin: 1.5em 0;
+}
+
+/* The fence keeps every bit of the code block styling in prose.css apart from its own margin: it is
+   the block that spaces itself here, so that the error state can sit the message tight above the
+   source it is about. */
+.prose .mermaid-block > .mermaid-source {
+  margin: 0;
+}
+
+.prose .mermaid-block[data-state="error"] > .mermaid-source {
+  margin-top: 0.6em;
+}
+
+.prose .mermaid-block[data-state="empty"] > .mermaid-figure,
+.prose .mermaid-block[data-state="source"] > .mermaid-figure,
+.prose .mermaid-block[data-state="pending"] > .mermaid-source,
+.prose .mermaid-block[data-state="diagram"] > .mermaid-source,
+.prose .mermaid-block[data-state="pending"] .mermaid-drawing,
+.prose .mermaid-block[data-state="error"] .mermaid-drawing,
+.prose .mermaid-block[data-state="diagram"] .mermaid-note {
+  display: none;
+}
+
+/* --------------------------------------------------------------------------------------------
+   The picture
+   -------------------------------------------------------------------------------------------- */
+
+/* Same surface as a code block, because that is what it is: this is the same fence, drawn. A
+   diagram wider than the measure scrolls inside its own box, since nothing in a document is allowed
+   to scroll the page sideways. */
+.prose .mermaid-figure {
+  display: flex;
+  justify-content: center;
+  padding: 1.1em;
+  background: var(--code-surface);
+  border: 1px solid var(--code-line);
+  border-radius: var(--r-md);
+  overflow-x: auto;
+  /* The picture is not text and a drag across the document should not select half of it. The caret
+     gets in through the click handler on the figure instead. */
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: text;
+  transition: opacity 120ms var(--ease);
+}
+
+.prose .mermaid-block[data-busy] > .mermaid-figure {
+  opacity: 0.55;
+}
+
+.prose .mermaid-drawing {
+  min-width: 0;
+}
+
+/* Mermaid sizes the SVG for the width it measured in, which is the whole window rather than the
+   measure. Letting it shrink to fit is better than a diagram that is scrolled by default. */
+.prose .mermaid-drawing svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+/* --------------------------------------------------------------------------------------------
+   Waiting, and failing
+
+   The note is chrome rather than prose, so it is set in the UI face at a chrome size. An error
+   keeps mermaid's own wording and its line breaks, because the line and column in it are the point.
+   -------------------------------------------------------------------------------------------- */
+
+.prose .mermaid-note {
+  font-family: var(--font-ui);
+  font-size: var(--t-2);
+  line-height: 1.5;
+  color: var(--ink-faint);
+}
+
+.prose .mermaid-block[data-state="error"] > .mermaid-figure {
+  justify-content: flex-start;
+  background: var(--danger-wash);
+  border-color: var(--danger);
+}
+
+.prose .mermaid-block[data-state="error"] .mermaid-note {
+  font-family: var(--font-mono);
+  font-size: var(--doc-mono);
+  color: var(--danger-ink);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
