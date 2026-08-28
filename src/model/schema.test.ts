@@ -240,10 +240,13 @@ describe("inline", () => {
     expect(link.toJSON()).toEqual({ type: "link", attrs: { href: "./a.md", title: "A" } });
   });
 
-  it("lets a code span sit inside a link but not inside emphasis", () => {
+  it("lets a code span sit inside a link and inside emphasis", () => {
     const code = m.code.create();
     expect(code.isInSet(m.link.create({ href: "./a.md" }).addToSet([code]))).toBeTruthy();
-    expect(m.strong.create().addToSet([code])).toEqual([code]);
+    for (const outer of [m.strong, m.em, m.strikethrough]) {
+      const set = outer.create().addToSet([code]);
+      expect([outer.name, set.map((mark) => mark.type.name)]).toEqual([outer.name, [outer.name, "code"]]);
+    }
   });
 
   it("treats math and images as inline atoms", () => {

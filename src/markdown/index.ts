@@ -29,7 +29,8 @@
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { schema } from "../model/schema";
 import type { MarkdownDocument } from "../model/doc";
-import { normaliseSource, splitFrontmatter, withFrontmatter } from "./frontmatter";
+import { rawNode } from "../model/doc";
+import { BOM, normaliseSource, splitFrontmatter, withFrontmatter } from "./frontmatter";
 import { parseToMdast } from "./handlers";
 import { buildDoc } from "./parse";
 import { serializeBody } from "./serialize";
@@ -77,6 +78,29 @@ export function parseMarkdown(source: string, path: string): MarkdownDocument {
  */
 export function serializeMarkdown(document: MarkdownDocument, doc: ProseMirrorNode): string {
   return withFrontmatter(document.frontmatter, serializeBody(doc, document.frontmatter === null));
+}
+
+/**
+ * The whole body as one raw block: the file, shown as its own source.
+ *
+ * The last resort for a document the editor will not hold. The bridge refuses a construct by making
+ * a raw block of it, which is the same answer at a smaller scale, and a raw block the user has not
+ * typed in is written back byte for byte, so a file opened this way and saved is the file that was
+ * read. The alternative that was here, an empty document, is the one outcome the module's fourth
+ * invariant exists to forbid: the file looks empty on screen and the first keystroke saves it that
+ * way over the bytes on disk.
+ */
+export function sourceDocument(document: MarkdownDocument): ProseMirrorNode {
+  const { text } = normaliseSource(document.source);
+  // The prefix is the frontmatter as it will be written back, and it carries the byte order mark
+  // when there is one. `text` has already had that mark taken off, so putting it into the slice
+  // offset would cut the body's first character off with it.
+  const head = document.frontmatter ?? "";
+  const prefix = head.startsWith(BOM) ? head.slice(BOM.length) : head;
+  const body = text.slice(prefix.length);
+  const doc = schema.nodes.doc.createAndFill(null, body ? [rawNode(body)] : []);
+  if (!doc) throw new Error("the source could not be held as a raw block");
+  return doc;
 }
 
 /**

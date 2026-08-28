@@ -327,13 +327,17 @@ const CONTAINERS: Array<[string, (inline: ProseMirrorNode[]) => ProseMirrorNode]
 
 const MARKS = ["link", "strikethrough", "strong", "em", "code"];
 
-/** Every pair the schema actually permits: code excludes the formatting marks, and is a leaf. */
+/**
+ * Every pair the schema actually permits: code is a leaf, so it is only ever the inner one.
+ *
+ * The inner code pairs were skipped here while the code mark excluded the formatting group, which
+ * is how `**`x`**` reached a release: the sweep could not build the one document that broke.
+ */
 function pairs(): Array<[string, string]> {
   const out: Array<[string, string]> = [];
   for (const outer of MARKS) {
     for (const inner of MARKS) {
       if (outer === inner || outer === "code") continue;
-      if (inner === "code" && outer !== "link") continue;
       out.push([outer, inner]);
     }
   }
@@ -343,8 +347,8 @@ function pairs(): Array<[string, string]> {
 describe("still fixed: every mark nested inside every other, in every block", () => {
   // The fourth pass found the delete handler's missing whitespace guard and said why three passes
   // had missed it: the sweeps carried strikethrough and link as sibling snippets and never nested
-  // them. This is that gap closed. Thirteen ordered pairs, five spanning shapes, three boundary
-  // paddings and eleven containers, which is 2145 documents, each built from the schema, written,
+  // them. This is that gap closed. Sixteen ordered pairs, five spanning shapes, three boundary
+  // paddings and eleven containers, which is 2640 documents, each built from the schema, written,
   // read back and then saved ten more times.
 
   it("keeps every mark over every span, in every container, without moving or growing", () => {
@@ -380,7 +384,7 @@ describe("still fixed: every mark nested inside every other, in every block", ()
       }
     }
 
-    expect(checked, "the sweep has to actually be the size it claims").toBe(2145);
+    expect(checked, "the sweep has to actually be the size it claims").toBe(2640);
     expect(found).toEqual([]);
   }, 120000);
 

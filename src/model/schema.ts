@@ -433,10 +433,16 @@ export const marks: { [name in MarkName]: MarkSpec } = {
     toDOM: () => ["s", 0],
   },
 
-  // A code span is literal, so it excludes the emphasis marks, but not link: [`x`](y) is valid.
+  // A code span's own content is literal, so nothing can be emphasised inside one, but a code span
+  // can itself be emphasised or linked: `**\`x\`**` and `[\`x\`](y)` are both ordinary markdown and
+  // both render on GitHub. Marks are a flat set here, so those two readings are the same set and
+  // the direction is decided once, by the serializer: src/markdown/serialize.ts puts code innermost
+  // and writes the emphasis around it. Excluding the formatting group instead, which this mark did
+  // until a document holding `**\`x\`**` could not be opened at all, is not a narrower rule but a
+  // wrong one: the bridge kept building the set the file described and every such document failed
+  // `doc.check()` on the way into the editor.
   code: {
     code: true,
-    excludes: "formatting code",
     parseDOM: [{ tag: "code" }],
     toDOM: () => ["code", 0],
   },

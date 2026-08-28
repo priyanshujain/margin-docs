@@ -8,6 +8,7 @@ import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { createEditorExtensions } from "./extensions";
 import { schema as contract } from "../model/schema";
 import { parseMarkdown, serializeMarkdown } from "../markdown";
+import { corpus } from "../markdown/corpus/load";
 
 const extensions = () =>
   createEditorExtensions({ documentPath: () => "/notes/a.md", onError: () => {} });
@@ -145,6 +146,43 @@ describe("the generated schema", () => {
     // What the editor hands back to be saved is a node of its own schema, never the bridge's, so
     // the serializer has to read node names rather than node types. This is that, asserted.
     expect(serializeMarkdown(parsed, rebound)).toBe(serializeMarkdown(parsed, parsed.doc));
+  });
+
+  // The gate that was missing. Every other sweep reads a document the bridge built, and a document
+  // the bridge built is not necessarily one the editor will accept: `check()` is what src/editor/
+  // Editor.tsx asks before it installs the state, and a document that fails it is not partly
+  // refused, it is replaced by an empty one and the whole file goes blank on screen. Nothing here
+  // called it on a parsed document, so a paragraph holding "**`x`**" opened as nothing at all.
+  it("holds every corpus file, checked the way the editor checks it", () => {
+    const found: string[] = [];
+    for (const file of corpus()) {
+      const parsed = parseMarkdown(file.source, `/${file.name}`);
+      try {
+        built.nodeFromJSON(parsed.doc.toJSON()).check();
+      } catch (error) {
+        found.push(`${file.name}: ${String(error)}`);
+      }
+    }
+    expect(found).toEqual([]);
+  });
+
+  it("holds a code span carrying every mark that can be wrapped around one", () => {
+    for (const source of ["**`x`**\n", "_`x`_\n", "~~`x`~~\n", "[`x`](./y.md)\n"]) {
+      const parsed = parseMarkdown(source, "/notes/a.md");
+      const rebound = built.nodeFromJSON(parsed.doc.toJSON());
+      expect(() => rebound.check(), source).not.toThrow();
+      expect(serializeMarkdown(parsed, rebound), source).toBe(source);
+    }
+
+    // All of them on one span. The spelling moves, because marks are a set and MARK_ORDER decides
+    // the nesting once for every document, so what is asserted is that it settles there and stays.
+    const source = "**~~[`x`](./y.md)~~**\n";
+    const parsed = parseMarkdown(source, "/notes/a.md");
+    expect(() => built.nodeFromJSON(parsed.doc.toJSON()).check()).not.toThrow();
+    const once = serializeMarkdown(parsed, parsed.doc);
+    expect(once).toBe("[~~**`x`**~~](./y.md)\n");
+    const again = parseMarkdown(once, "/notes/a.md");
+    expect(serializeMarkdown(again, again.doc)).toBe(once);
   });
 });
 

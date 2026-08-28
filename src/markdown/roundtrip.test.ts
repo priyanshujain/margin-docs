@@ -5,7 +5,18 @@ import { describe, expect, it } from "vitest";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { schema } from "../model/schema";
 import { corpus } from "./corpus/load";
-import { parseMarkdown, serializeMarkdown } from "./index";
+import { parseMarkdown, serializeMarkdown, sourceDocument } from "./index";
+import { BOM, normaliseSource } from "./frontmatter";
+
+/**
+ * The source as a save of it writes it back: CRLF collapsed, the byte order mark still there, and
+ * the one line ending the house style ends a file with. Everything else is the file's own bytes.
+ */
+function settled(source: string): string {
+  const { text, bom } = normaliseSource(source);
+  const body = text === "" || text.endsWith("\n") ? text : `${text}\n`;
+  return bom ? BOM + body : body;
+}
 
 const files = corpus();
 
@@ -184,6 +195,17 @@ describe("opening a document", () => {
       const document = parseMarkdown(file.source, `/corpus/${file.name}`);
       expect(document.source).toBe(before);
       expect(file.source).toBe(before);
+    }
+  });
+
+  // The fallback the editor installs when a document is one it cannot hold. It has to be worth
+  // more than the empty document it replaced, which means the bytes have to survive a save.
+  it("can be shown as its own source, and written back as the bytes that were read", () => {
+    for (const file of files) {
+      const document = parseMarkdown(file.source, `/corpus/${file.name}`);
+      const shown = sourceDocument(document);
+      expect(shown.childCount, file.name).toBeLessThanOrEqual(1);
+      expect(serializeMarkdown(document, shown), file.name).toBe(settled(file.source));
     }
   });
 

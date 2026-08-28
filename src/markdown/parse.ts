@@ -446,7 +446,10 @@ function inlineFrom(nodes: PhrasingContent[], marks: readonly Mark[]): ProseMirr
         break;
       }
       case "inlineCode": {
-        if (node.value) out.push(schema.text(node.value, [...marks, m.code.create()]));
+        // addToSet for the same reason the wrappers use it: a spread is sorted by `Mark.setFrom`
+        // but is not put through the marks' own exclusion rules, so it can build a set the schema
+        // does not allow and that `doc.check()` refuses, which blanks the whole document.
+        if (node.value) out.push(schema.text(node.value, m.code.create().addToSet(marks)));
         break;
       }
       case "link": {
@@ -456,7 +459,7 @@ function inlineFrom(nodes: PhrasingContent[], marks: readonly Mark[]): ProseMirr
         // dropping a destination quietly is the one thing this bridge is here not to do.
         if (marks.some((mark) => mark.type === m.link)) return null;
         const mark = m.link.create({ href: node.url, title: node.title ?? null });
-        const inner = inlineFrom(node.children, [...marks, mark]);
+        const inner = inlineFrom(node.children, mark.addToSet(marks));
         // A mark needs something to sit on, so a link with no text at all, `[](./x.md)`, has
         // nowhere to live in the document and would be dropped along with its destination.
         if (!inner || inner.length === 0) return null;

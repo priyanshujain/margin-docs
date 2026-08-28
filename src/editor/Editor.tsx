@@ -20,6 +20,7 @@ import type { Editor } from "@tiptap/react";
 import { EditorState, TextSelection } from "@tiptap/pm/state";
 import type { EditorProps as ProseMirrorProps, EditorView } from "@tiptap/pm/view";
 import type { CalloutKind, HeadingLevel, MarkdownDocument } from "../model/doc";
+import { sourceDocument } from "../markdown";
 import { marks as markSpecs } from "../model/schema";
 import type { MarkName } from "../model/schema";
 import { notify } from "../store/useToast";
@@ -535,7 +536,20 @@ export function DocumentEditor({
       return EditorState.create({ doc, plugins: base.plugins });
     } catch (error) {
       reportContentError(error);
-      return EditorState.create({ schema: base.schema, plugins: base.plugins });
+      // Never an empty document. `check` answers for the whole tree, so one text node the schema
+      // will not hold used to blank the file on screen, and the file on screen is what the next
+      // keystroke saves: the debounce would then write those few characters over the bytes on
+      // disk. The file's own source, in one raw block, is a document that always passes and that
+      // a save writes back verbatim, so the worst case is a document shown as source rather than
+      // a document destroyed.
+      try {
+        const doc = ed.schema.nodeFromJSON(sourceDocument(source).toJSON());
+        doc.check();
+        return EditorState.create({ doc, plugins: base.plugins });
+      } catch (fallback) {
+        reportContentError(fallback);
+        return EditorState.create({ schema: base.schema, plugins: base.plugins });
+      }
     }
   };
 

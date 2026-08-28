@@ -9,8 +9,9 @@ Strong inside a strikethrough, and a strikethrough inside strong:
 Emphasis inside a link, and a link inside emphasis:
 [a\_b\_c](./x.md) and _a_[_b_](./y.md)_c_.
 
-Code inside a link, which is the only pair code takes:
-[`code span`](./z.md) and [a`b`c](./w.md).
+Code inside a link, inside each emphasis mark, and inside all of them at once:
+[`code span`](./z.md) and [a`b`c](./w.md) and **`bold code`** and _`em code`_ and
+~~`struck code`~~ and **~~[`the lot`](./v.md)~~**.
 
 All four at once, over a boundary space:
 **q**~~**&#x20;r&#x20;**~~**s**
