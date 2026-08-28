@@ -13,7 +13,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 use margin_docs_lib::dto::WatchEvent;
@@ -407,7 +407,13 @@ fn a_deleted_root_is_reported_removed() {
     while !removed && Instant::now() < give_up {
         match rx.recv_timeout(QUIET) {
             Ok(event) => removed = event.path == want && event.kind == "removed",
-            Err(_) => break,
+            // A quiet window is not an answer, it is the absence of one. FSEvents coalesces on its
+            // own schedule, so on a loaded machine the first 900ms can pass with nothing in it and
+            // the removal still arrive comfortably inside the 15s deadline. Breaking here gave up
+            // after one such window and made the test a coin flip on any runner slower than this
+            // laptop. Only a dropped sender means no answer is ever coming.
+            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Disconnected) => break,
         }
     }
     assert!(removed, "deleting the root reported nothing");
