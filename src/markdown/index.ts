@@ -33,9 +33,9 @@ import { rawNode } from "../model/doc";
 import { BOM, normaliseSource, splitFrontmatter, withFrontmatter } from "./frontmatter";
 import { parseToMdast } from "./handlers";
 import { buildDoc } from "./parse";
-import { serializeBody } from "./serialize";
+import { type Refused, serializeBody } from "./serialize";
 
-export type { MarkdownDocument };
+export type { MarkdownDocument, Refused };
 
 /**
  * Parses one markdown file into the document the editor edits.
@@ -75,9 +75,21 @@ export function parseMarkdown(source: string, path: string): MarkdownDocument {
  * first byte, and that is the only thing it is told. A block whose bytes open `---` or `+++` is
  * read back as frontmatter when it sits at the top of a file and is perfectly ordinary two lines
  * down, so the defence against it has to be skipped for a body that already has a prefix coming.
+ *
+ * `refused` is the traffic in the other direction and the only thing that goes back up: a caller
+ * that hands one in is told, by the time this returns, whether the bytes it is getting are missing
+ * an edit the document still holds. Nothing else about it is optional, so a caller with no use for
+ * the answer leaves it out.
  */
-export function serializeMarkdown(document: MarkdownDocument, doc: ProseMirrorNode): string {
-  return withFrontmatter(document.frontmatter, serializeBody(doc, document.frontmatter === null));
+export function serializeMarkdown(
+  document: MarkdownDocument,
+  doc: ProseMirrorNode,
+  refused?: Refused,
+): string {
+  return withFrontmatter(
+    document.frontmatter,
+    serializeBody(doc, document.frontmatter === null, refused),
+  );
 }
 
 /**
@@ -122,14 +134,23 @@ export function parsePlainText(source: string, path: string): MarkdownDocument {
 }
 
 /**
- * The counterpart of `parsePlainText`, taking the same pair as `serializeMarkdown` so a caller can
- * pick the two functions by `documentKindForPath` and then stop caring which it got.
+ * The counterpart of `parsePlainText`, taking the same arguments as `serializeMarkdown` so a caller
+ * can pick the two functions by `documentKindForPath` and then stop caring which it got.
  *
  * No escaping, no reflowing, no normalising: the characters in the document are the bytes of the
  * file.
  */
-export function serializePlainText(document: MarkdownDocument, doc: ProseMirrorNode): string {
+export function serializePlainText(
+  document: MarkdownDocument,
+  doc: ProseMirrorNode,
+  refused?: Refused,
+): string {
   void document;
+  // Taken and ignored so the two serializers stay one type. `bridgeFor` in src/document.ts hands
+  // its caller whichever of the pair the path calls for, and a call the other half has no parameter
+  // for does not typecheck against the union. There is nothing here to refuse either way: plain
+  // text has no raw blocks and no lists, only lines.
+  void refused;
   const lines: string[] = [];
   doc.forEach((block) => lines.push(block.textContent));
   return lines.join("\n");

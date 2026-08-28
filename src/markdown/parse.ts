@@ -13,7 +13,7 @@
 // is reopened.
 
 import type { Mark, Node as ProseMirrorNode } from "@tiptap/pm/model";
-import type { BlockContent, DefinitionContent, List, ListItem, PhrasingContent, RootContent, Table } from "mdast";
+import type { BlockContent, DefinitionContent, Link, List, ListItem, PhrasingContent, RootContent, Table } from "mdast";
 import { calloutKindFromLabel, rawNode } from "../model/doc";
 import { isFrontmatterNode } from "./frontmatter";
 import type { ColumnAlign, HeadingLevel } from "../model/doc";
@@ -424,9 +424,13 @@ function toggleFrom(children: RootContent[], opening: number, closing: number, t
  * Soft line breaks stay inside the text as the newlines mdast gives them, so a paragraph that was
  * hard wrapped at some column on disk is written back wrapped at the same places. Rewrapping is a
  * whole file diff on a document nobody meaningfully edited.
+ *
+ * The leaves go into one accumulator shared by every level of the mark nesting, rather than each
+ * level building its own and the caller spreading it in. A link has to know what leaf is
+ * immediately to its left to answer `runAfter`, and the emphasis or strikethrough that leaf came
+ * out of is no part of that question, so the walk cannot be the thing that hides it.
  */
-function inlineFrom(nodes: PhrasingContent[], marks: readonly Mark[]): ProseMirrorNode[] | null {
-  const out: ProseMirrorNode[] = [];
+function inlineFrom(nodes: PhrasingContent[], marks: readonly Mark[], out: ProseMirrorNode[] = []): ProseMirrorNode[] | null {
   for (const node of nodes) {
     switch (node.type) {
       case "text": {
@@ -440,9 +444,7 @@ function inlineFrom(nodes: PhrasingContent[], marks: readonly Mark[]): ProseMirr
         // addToSet, not a spread: Mark.setFrom sorts but does not deduplicate, and GFM really does
         // nest a mark inside itself for "~~a ~~b~~ c~~". Two identical marks on one text node
         // serialize as four tildes, which reopen as literal text and then grow on every save.
-        const inner = inlineFrom(node.children, mark.create().addToSet(marks));
-        if (!inner) return null;
-        out.push(...inner);
+        if (!inlineFrom(node.children, mark.create().addToSet(marks), out)) return null;
         break;
       }
       case "inlineCode": {
@@ -458,12 +460,11 @@ function inlineFrom(nodes: PhrasingContent[], marks: readonly Mark[]): ProseMirr
         // The block goes back as raw source instead: keeping the bytes is the honest answer, and
         // dropping a destination quietly is the one thing this bridge is here not to do.
         if (marks.some((mark) => mark.type === m.link)) return null;
-        const mark = m.link.create({ href: node.url, title: node.title ?? null });
-        const inner = inlineFrom(node.children, mark.addToSet(marks));
+        const mark = m.link.create({ href: node.url, title: node.title ?? null, run: runAfter(out, node) });
+        const at = out.length;
         // A mark needs something to sit on, so a link with no text at all, `[](./x.md)`, has
         // nowhere to live in the document and would be dropped along with its destination.
-        if (!inner || inner.length === 0) return null;
-        out.push(...inner);
+        if (!inlineFrom(node.children, mark.addToSet(marks), out) || out.length === at) return null;
         break;
       }
       case "image":
@@ -480,4 +481,20 @@ function inlineFrom(nodes: PhrasingContent[], marks: readonly Mark[]): ProseMirr
     }
   }
   return out;
+}
+
+/**
+ * Whether this link has to be told apart from the one before it, and how.
+ *
+ * ProseMirror has no way to hold two adjacent leaves whose marks compare equal: `Fragment.fromArray`
+ * welds the text nodes together, and the serializer's own fold groups by the same equality, so
+ * `[a](/)[b](/)` was one link by the time anything could see it was two. `run` is what makes the
+ * two marks unequal, and it alternates rather than counting so that it is 0 on every link in every
+ * file that does not have a neighbour to be told apart from.
+ */
+function runAfter(out: ProseMirrorNode[], node: Link): number {
+  const before = out[out.length - 1]?.marks.find((mark) => mark.type === m.link);
+  if (!before) return 0;
+  if (before.attrs.href !== node.url || before.attrs.title !== (node.title ?? null)) return 0;
+  return before.attrs.run === 0 ? 1 : 0;
 }

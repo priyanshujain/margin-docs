@@ -52,14 +52,27 @@ jobs:
       - name: Stub the build inputs
         run: mkdir -p dist && touch dist/index.html
 
-      # Every target except `no_write_on_open`, which is skipped rather than run and failing.
-      # That suite checks the promise the whole project rests on, that the editor writes nothing
-      # the user did not edit, and it checks it against a real git repository rather than a
-      # TempDir. The repository is hand built at a hardcoded path under /tmp, so there is nothing
-      # here to create it and macOS reaps it after three days without access. It is not skipped
-      # because it is unimportant. It is skipped because it currently cannot run anywhere, and a
-      # CI that is permanently red says less than one that is green about a named subset.
-      # Making the fixture reproducible is tracked in the issue.
+      # Every target except `no_write_on_open`, which gets the step below to itself.
       - name: Test
         working-directory: src-tauri
         run: cargo test --lib --bins --test fs --test fts5 --test watch --test watch_payload
+
+      # The suite that checks the promise the whole project rests on, that the editor writes
+      # nothing the user did not edit. It runs against a real git repository rather than against a
+      # TempDir, because the evidence it wants is a folder somebody could plausibly have opened
+      # coming back from `git status` with no lines in it, and a bag of files in a TempDir cannot
+      # say that. The repository used to be built by hand at a fixed path under /tmp, which meant
+      # the suite ran on one machine until macOS reaped the folder and then ran nowhere, and that
+      # is why it spent a while excluded from this file. It is now built from scratch by
+      # `tests/support/notes_repo.rs` on the first test that asks for it: the documents are copied
+      # out of the markdown corpus, the vendored node_modules is generated, and a git init and one
+      # commit turn the result into the oracle. Nothing has to exist on the runner beforehand
+      # except git itself, and the suite says so plainly if git is missing rather than passing on a
+      # folder nobody checked.
+      #
+      # It gets its own step because the tests share that one folder and several of them mutate it,
+      # so they have to run one at a time. Passing `--test-threads=1` to the command above would
+      # slow the other suites to the same pace for no reason.
+      - name: Test no_write_on_open
+        working-directory: src-tauri
+        run: cargo test --test no_write_on_open -- --test-threads=1

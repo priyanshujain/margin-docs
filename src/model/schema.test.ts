@@ -235,9 +235,12 @@ describe("callout and toggle", () => {
 describe("inline", () => {
   it("keeps image and link attributes", () => {
     expect(n.image.create().attrs).toEqual({ src: "", alt: null, title: null });
-    expect(m.link.create().attrs).toEqual({ href: null, title: null });
+    // `run` is the third one, and it is 0 here because it is 0 on every link that does not sit
+    // next to another link to the same place. It is what makes two of those two marks instead of
+    // one, and src/markdown/parse.ts is where it gets a value other than this.
+    expect(m.link.create().attrs).toEqual({ href: null, title: null, run: 0 });
     const link = m.link.create({ href: "./a.md", title: "A" });
-    expect(link.toJSON()).toEqual({ type: "link", attrs: { href: "./a.md", title: "A" } });
+    expect(link.toJSON()).toEqual({ type: "link", attrs: { href: "./a.md", title: "A", run: 0 } });
   });
 
   it("lets a code span sit inside a link and inside emphasis", () => {

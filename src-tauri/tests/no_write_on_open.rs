@@ -6,6 +6,9 @@
 // touched is `git status` being empty, plus a byte-level snapshot of every path under the root
 // including .git itself.
 //
+// The repository is built by the suite, under /private/tmp, on the first test that asks for it, and
+// there is nothing to set up by hand. `tests/support/notes_repo.rs` is where it comes from.
+//
 // Run single threaded. The tests share one folder and several of them mutate it.
 //
 //     cargo test --test no_write_on_open -- --test-threads=1 --nocapture
@@ -25,28 +28,24 @@ use margin_docs_lib::fs::{
 };
 use margin_docs_lib::watch::spawn_watcher;
 
-const REPO: &str = "/private/tmp/margin-notouch/notes-repo";
+#[path = "support/notes_repo.rs"]
+mod notes_repo;
 
 // ---------------------------------------------------------------- fixture
 
+/// The fixture repository, built on the first call and shared by every test after it.
 fn repo() -> PathBuf {
-    let path = PathBuf::from(REPO);
+    let path = notes_repo::path().to_path_buf();
     assert!(
         path.join(".git").is_dir(),
-        "the fixture repo is missing: {REPO}"
+        "the fixture repo is missing: {}",
+        path.display()
     );
     path
 }
 
 fn git(args: &[&str]) -> String {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(REPO)
-        .output()
-        .expect("git runs");
-    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
-    text.push_str(&String::from_utf8_lossy(&out.stderr));
-    text
+    notes_repo::git(args)
 }
 
 /// Back to the committed state, then one warm `git status` so the index's stat cache is already

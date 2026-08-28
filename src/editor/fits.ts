@@ -69,6 +69,12 @@ const OPAQUE = ["callout", "toggle"] as const;
 const BLANK_LINE = /\n[ \t]*\n/;
 
 /**
+ * Every line ending in a piece of text, which since the heading became `whitespace: "pre"` is the
+ * other way a second line gets into a block that has nowhere to put one on its own.
+ */
+const LINE_ENDING = /\r\n?|\n/g;
+
+/**
  * The rectangle of whole cells a drag across a table makes, named once so that the four questions
  * below and src/editor/blocks/tables.ts ask it in the same words.
  *
@@ -172,7 +178,7 @@ export function place(
 export type Change = "convert" | "wrap" | "unwrap";
 
 /** Whether this position is inside the one block whose bytes are the file's own. */
-function inRaw($pos: ResolvedPos): boolean {
+export function inRaw($pos: ResolvedPos): boolean {
   for (let depth = $pos.depth; depth > 0; depth -= 1) {
     if ($pos.node(depth).type.name === RAW) return true;
   }
@@ -180,7 +186,7 @@ function inRaw($pos: ResolvedPos): boolean {
 }
 
 /** Whether the selection is inside, or reaches across, a raw block. */
-function touchesRaw(state: EditorState): boolean {
+export function touchesRaw(state: EditorState): boolean {
   return state.selection.ranges.some(({ $from, $to }) => {
     if (inRaw($from) || inRaw($to)) return true;
     let found = false;
@@ -225,12 +231,17 @@ export function changeable(state: EditorState): boolean {
  *
  * A GFM cell is one line, and src/markdown/serialize.ts flattens a break inside one into the space
  * a cell can hold. A heading is one line too, except at the two levels that have a setext
- * spelling: `#### a` has nowhere to put the second line, so mdast writes the break out as a space,
+ * spelling: `#### a` has nowhere to put a second line, so mdast writes the break out as a space,
  * while an underlined heading keeps it.
  *
  * Either way nothing is lost that the user typed, and either way the editor is drawing a line the
  * next open of the file will not have. An editor showing a construct the file silently swallows is
  * an editor lying about what was saved.
+ *
+ * `strandedBreaks` asks this of a newline in the text as well, which since the heading became
+ * `whitespace: "pre"` is the other way a second line arrives. That one the writer can spell, as
+ * `&#xA;`, and it comes back, so the no there is not about losing it: a heading below the two
+ * underlined levels is one line of the file, and this editor does not put a second one in it.
  */
 function holdsBreak(parent: ProseMirrorNode): boolean {
   const role = parent.type.spec.tableRole;
@@ -259,7 +270,8 @@ function holdsTrailingBreak(parent: ProseMirrorNode): boolean {
 }
 
 /**
- * The breaks in this document that the next save will swallow or spell wrong.
+ * The breaks in this document that the next save will swallow or spell wrong, and the newlines in a
+ * block that is not allowed a second line at all.
  *
  * A break with nothing after it in its block is usually not one of them: that is the half typed
  * line somebody is in the middle of, it has no spelling either, and the next character they type
@@ -273,6 +285,14 @@ function strandedBreaks(doc: ProseMirrorNode): number {
     const trailing = holdsTrailingBreak(parent);
     if (held && trailing) return;
     parent.forEach((child, _offset, index) => {
+      // A newline in the text is the same second line arriving by the other door. It used to be
+      // impossible to build one here, because a conversion into a heading rewrote every newline as
+      // a break on the way in; now that a heading is `whitespace: "pre"` the newline survives, and
+      // a block that cannot hold a break does not get to hold this either.
+      if (child.isText) {
+        if (!held) total += (child.text?.match(LINE_ENDING) ?? []).length;
+        return;
+      }
       if (child.type.name !== "hardBreak") return;
       const last = index === parent.childCount - 1;
       if (last ? !trailing : !held) total += 1;
@@ -329,11 +349,12 @@ export function change(
   if (kind !== "unwrap" && OPAQUE.some((name) => countOf(tr.doc, name) < countOf(before, name))) {
     return false;
   }
-  // And the block the content lands in has to be able to write down what is in it. A fence of two
-  // lines turned into a heading is two lines in a heading, which only the two levels with an
-  // underlined spelling can hold: the deeper four write the break out as a space, so the second
-  // line would be on screen and gone from the file, which is `breakable` refusing Shift+Enter in
-  // the same block, arrived at from the other direction.
+  // And the block the content lands in has to be able to hold what is in it. A fence of two lines
+  // turned into a heading is two lines in a heading, which only the two levels with an underlined
+  // spelling have: the deeper four are one line of the file, whether the second line arrives as a
+  // break, which they write out as a space and lose, or as a newline in the text, which they can
+  // spell but which this editor still does not put there. That is `breakable` refusing Shift+Enter
+  // in the same block, arrived at from the other direction.
   if (strandedBreaks(tr.doc) > strandedBreaks(before)) return false;
 
   editor.view.dispatch(tr);
@@ -369,15 +390,28 @@ export function markable(state: EditorState, type: MarkType): boolean {
  * `<Chart data={points} title="Sales" />` put those bytes through the middle of the tag, and the
  * file reopened as a heading, two paragraphs and a list with no raw block anywhere in it.
  *
- * Text with no blank line in it is fine everywhere, which is what the first line says: a fence and
- * a raw block are `whitespace: "pre"` so an ordinary newline stays a newline, and the serializer
- * writes a newline inside a table cell as the space a GFM cell can hold.
+ * Text with no blank line in it is fine everywhere else, and everywhere else is what the first line
+ * answers: a fence and a raw block are `whitespace: "pre"` so an ordinary newline stays a newline,
+ * and the serializer writes a newline inside a table cell as the space a GFM cell can hold.
+ *
+ * Inside a raw block the question is asked of the RESULT, because the blank line does not have to
+ * be in the paste. Text copied as whole lines carries the line ending they were copied with, and
+ * one of those pasted at the end of a line puts its newline against the newline already there.
+ * Neither string has a blank line in it and the block has one afterwards, which is the same lost
+ * construct arriving by arithmetic instead of by content: `<div class="x">` with "hello\n" pasted
+ * at the end of that first line reopened as a raw block, a paragraph and a second raw block, with
+ * no toast and nothing refused.
  */
 export function holdsText(state: EditorState, text: string): boolean {
-  if (!BLANK_LINE.test(text.replace(/\r\n?/g, "\n"))) return true;
-  return state.selection.ranges.every(
-    ({ $from, $to }) => $from.parent.type.name !== RAW && $to.parent.type.name !== RAW,
-  );
+  const value = text.replace(/\r\n?/g, "\n");
+  return state.selection.ranges.every(({ $from, $to }) => {
+    if ($from.parent.type.name !== RAW && $to.parent.type.name !== RAW) return true;
+    if (!$from.sameParent($to)) return !BLANK_LINE.test(value);
+    const parent = $from.parent;
+    const head = parent.textBetween(0, $from.parentOffset);
+    const tail = parent.textBetween($to.parentOffset, parent.content.size);
+    return !BLANK_LINE.test(head + value + tail);
+  });
 }
 
 /**

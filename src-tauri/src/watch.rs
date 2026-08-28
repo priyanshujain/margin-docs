@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use notify::event::{ModifyKind, RenameMode};
@@ -192,7 +192,16 @@ where
     }
     let canonical = std::fs::canonicalize(&root).map_err(|e| e.to_string())?;
 
+    // Shared rather than owned by the handler, because the root's own disappearance is reported by
+    // the watchdog below and not by the debouncer, and both have to emit into the same place. Behind
+    // a lock because a sink is only `Send` and not `Sync`, which also has the two take turns rather
+    // than interleave two batches in whatever the frontend is doing with them.
+    let sink = Arc::new(Mutex::new(sink));
+    let watchdog_sink = Arc::downgrade(&sink);
+
     let watched = canonical.clone();
+    let watchdog_id = root_id.clone();
+    let watchdog_path = root.clone();
     let handler = move |result: DebounceEventResult| {
         let batch = match result {
             Ok(batch) => batch,
@@ -205,7 +214,9 @@ where
         };
         let events = watch_events(&batch, &root_id, &watched, &root);
         if !events.is_empty() {
-            sink(events);
+            if let Ok(sink) = sink.lock() {
+                (*sink)(events);
+            }
         }
     };
 
@@ -228,6 +239,43 @@ where
     debouncer
         .watch(&canonical, RecursiveMode::Recursive)
         .map_err(|e| e.to_string())?;
+
+    // The root's own removal is the one change this watcher cannot wait for, so it is asked about
+    // instead. An FSEvents stream is placed on a path and hears nothing that happens above that
+    // path, and notify does not ask for the flag that would change that, so a parent folder renamed
+    // or deleted takes the root with it in complete silence. Even the root's own deletion is a
+    // favour rather than a promise: a folder emptied and removed can come back as one coalesced
+    // event on the parent, which is not a path this stream matches, and then the whole batch is
+    // dropped before anything here sees it. Waiting for an event that may never be sent is what left
+    // a folder deleted out from under the app looking open, with a watcher still in the map holding
+    // a stream on a path that no longer exists.
+    //
+    // One stat per debounce tick settles it on any filesystem, and the answer is terminal: nothing
+    // further will ever arrive on a stream whose path is gone, so the thread reports the removal and
+    // stops. `watch_start` hears that removal like any other and drops the watcher.
+    //
+    // The thread ends with the watch. The sink is the only thing it holds and it holds it weakly, so
+    // once the debouncer is dropped and its own thread lets go of the handler there is nothing left
+    // to report into and nothing to report about.
+    std::thread::spawn(move || loop {
+        std::thread::sleep(DEBOUNCE);
+        let Some(sink) = watchdog_sink.upgrade() else {
+            return;
+        };
+        if !is_gone(&canonical) {
+            continue;
+        }
+        if let Ok(sink) = sink.lock() {
+            (*sink)(vec![WatchEvent {
+                root: watchdog_id.clone(),
+                path: watchdog_path.to_string_lossy().into_owned(),
+                kind: "removed".to_string(),
+                old_path: None,
+            }]);
+        }
+        return;
+    });
+
     Ok(debouncer)
 }
 
@@ -292,10 +340,12 @@ fn watch_events(
         merge(&mut events, &mut index, next);
     }
 
-    // The root itself going away is the one change nothing under it can describe. macOS does report
-    // it as an event on the watched path, but a folder moved rather than emptied is a single rename
-    // this side may never see, so the state of the folder is checked rather than waited for.
-    if !canonical_root.exists() {
+    // The root itself going away is the one change nothing under it can describe. macOS usually does
+    // report it as an event on the watched path, but a folder moved rather than emptied is a single
+    // rename this side may never see, so the state of the folder is checked rather than waited for.
+    // This is the fast path only: it reports the removal in the same batch as the changes that came
+    // with it, and the watchdog in `spawn_watcher` is what makes it certain to be reported at all.
+    if is_gone(canonical_root) {
         merge(
             &mut events,
             &mut index,
@@ -309,6 +359,18 @@ fn watch_events(
     }
 
     events
+}
+
+/// Whether the path is not there any more, as against unreadable for some other reason.
+///
+/// Only a missing file is an answer. A stat that fails because permissions changed or because a
+/// volume stopped answering says nothing about whether the folder still exists, and closing the
+/// user's open folder on the strength of it would be worse than reporting nothing at all.
+fn is_gone(path: &Path) -> bool {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => false,
+        Err(error) => error.kind() == std::io::ErrorKind::NotFound,
+    }
 }
 
 fn merge(events: &mut Vec<WatchEvent>, index: &mut HashMap<String, usize>, next: WatchEvent) {

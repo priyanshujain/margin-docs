@@ -21,7 +21,12 @@ import {
 } from "./api/files";
 import { revealInFinder, rootClose, rootOpen, rootsList, treeRead } from "./api/roots";
 import { watchStart, watchStop } from "./api/watch";
-import { abandonDocument, documentChangedOnDisk, flushPendingSave } from "./document";
+import {
+  abandonDocument,
+  documentChangedOnDisk,
+  documentMovedTo,
+  flushPendingSave,
+} from "./document";
 import { rewriteLinksForMove } from "./linkRewrite";
 import {
   INDEX_PROGRESS_EVENT,
@@ -243,11 +248,31 @@ export async function renamePath(path: string, name: string): Promise<void> {
   if (useWorkspace.getState().selectedPath === path) {
     useWorkspace.getState().select(node.path);
   }
-  // Still dirty means the flush conflicted, so the buffer is the only copy of that edit and
-  // reopening at the new name would throw it away. It stays where it is and stays flagged.
-  if (affected && open !== null && !useDocument.getState().dirty) {
-    await useDocument.getState().open(node.path + open.slice(path.length));
-  }
+  await followTheFile(open, affected, path, node.path);
+}
+
+/**
+ * Points the open document at where its file went, either way round.
+ *
+ * A clean buffer is reopened, which is what puts the rewritten links in front of the user. A dirty
+ * one is not, because the flush at the top of the caller conflicted or the user typed while the
+ * sweep was running, and either way the buffer is the only copy of that edit and a reopen is a
+ * read that would throw it away. What it is not allowed to be is left where it was: a sweep can
+ * read and write five thousand documents, which is a long time to be holding a buffer over a path
+ * this app has already moved the file off, and the save on the other end of that would have put a
+ * second copy of the document back at the old path. `documentMovedTo` is the whole of the fix and
+ * it says why there.
+ */
+async function followTheFile(
+  open: string | null,
+  affected: boolean,
+  from: string,
+  to: string,
+): Promise<void> {
+  if (!affected || open === null) return;
+  const moved = to + open.slice(from.length);
+  if (useDocument.getState().dirty) documentMovedTo(moved);
+  else await useDocument.getState().open(moved);
 }
 
 /**
@@ -269,9 +294,7 @@ export async function movePath(path: string, destDir: string): Promise<string> {
   if (useWorkspace.getState().selectedPath === path) {
     useWorkspace.getState().select(node.path);
   }
-  if (affected && open !== null && !useDocument.getState().dirty) {
-    await useDocument.getState().open(node.path + open.slice(path.length));
-  }
+  await followTheFile(open, affected, path, node.path);
   return node.path;
 }
 

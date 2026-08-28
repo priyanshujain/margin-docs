@@ -8,6 +8,10 @@ const BASE_URL = `http://localhost:${PORT}`;
 
 export default defineConfig({
   testDir: "./tests",
+  // Run before anything else, because `reuseExistingServer` below means the server on the port may
+  // belong to another checkout, and a suite that tests somebody else's code is worse than no suite.
+  // What it checks and why it can check it by comparing bytes is in tests/identity.ts.
+  globalSetup: "./tests/identity.ts",
   fullyParallel: true,
   // No retries on purpose. A test that only passes on the second go is a test that is lying about
   // something.

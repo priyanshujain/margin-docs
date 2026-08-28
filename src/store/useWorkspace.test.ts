@@ -9,6 +9,7 @@ const roots = vi.hoisted(() => ({
   rootOpen: vi.fn(),
   rootClose: vi.fn(),
   treeRead: vi.fn(),
+  sweepDocuments: vi.fn(),
   revealInFinder: vi.fn(),
   openExternal: vi.fn(),
 }));
@@ -109,6 +110,10 @@ beforeEach(() => {
       dir(`${path}/guides`, [file(`${path}/guides/writing.md`)]),
       file(`${path}/logo.png`, "other"),
     ]);
+  });
+  roots.sweepDocuments.mockImplementation(async (rootId: string) => {
+    const path = rootId.slice("id-".length);
+    return [`${path}/README.md`, `${path}/guides/writing.md`];
   });
   roots.rootClose.mockResolvedValue(undefined);
   roots.revealInFinder.mockResolvedValue(undefined);

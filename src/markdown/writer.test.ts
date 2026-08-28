@@ -192,6 +192,7 @@ describe("a list written tight", () => {
       ["a table", [paragraph(text("a")), TABLE]],
       ["an equation", [paragraph(text("a")), n.mathBlock.createChecked({ latex: "y" })]],
       ["a quote", [paragraph(text("a")), n.blockquote.createChecked(null, paragraph(text("q")))]],
+      ["a rule, which is written as the spelling that interrupts a paragraph", [paragraph(text("a")), n.horizontalRule.createChecked()]],
     ];
 
     for (const [what, content] of tight) {
@@ -206,7 +207,6 @@ describe("a list written tight", () => {
   it("writes an item loose when its blocks would run into each other", () => {
     const loose: Array<[string, ProseMirrorNode[]]> = [
       ["two paragraphs run together into one", [paragraph(text("a")), paragraph(text("b"))]],
-      ["a rule under a paragraph is a setext heading", [paragraph(text("a")), n.horizontalRule.createChecked()]],
       ["a paragraph under a nested list is a lazy continuation of it", [paragraph(text("a")), NESTED, paragraph(text("e"))]],
       ["a paragraph under a quote is a lazy continuation of it", [paragraph(text("a")), n.blockquote.createChecked(null, paragraph(text("q"))), paragraph(text("e"))]],
       ["a paragraph under a table is another row of it", [paragraph(text("a")), TABLE, paragraph(text("e"))]],

@@ -102,12 +102,31 @@ export const nodes: { [name in NodeName]: NodeSpec } = {
     toDOM: () => ["p", 0],
   },
 
+  // `whitespace: "pre"` is the same three part sentence as the paragraph's, for the same reason: a
+  // setext heading is the one heading markdown lets an author wrap by hand, and the wrap is theirs.
+  // src/markdown/parse.ts builds a heading through the same call a paragraph goes through, so the
+  // soft break stays a newline in the text, and prose.css draws the whole surface pre-wrap, so the
+  // newline is on screen where the author put it. Left at the default, prosemirror-view read every
+  // one of those wraps back out of the editor's own DOM as a `hardBreak` on the next keystroke, and
+  // mdast writes a break inside a setext heading as a backslash and a line ending, so one character
+  // typed into a two line heading put a backslash into the user's own words.
+  //
+  // It holds at every level and not only at the two underlined ones. The deeper four have no setext
+  // spelling and so no hand wrap to keep, but they can still hold a line ending, spelled `&#xA;` on
+  // disk, and it round trips; left at the default a keystroke turned that into a break, which those
+  // levels write out as a space. On screen until the next save, and gone after it.
+  //
+  // The parse rules say the opposite on purpose, and a rule's own answer outranks the node's, which
+  // is the paragraph's reasoning verbatim: whitespace is significant in a heading THIS editor
+  // rendered, and meaningless in an `<h2>` off somebody else's page, where the newlines and the
+  // runs of spaces are the html source's own indentation.
   heading: {
     content: "inline*",
     group: "block",
     defining: true,
+    whitespace: "pre",
     attrs: { level: { default: 1, validate: "number" } },
-    parseDOM: HEADING_LEVELS.map((level) => ({ tag: `h${level}`, attrs: { level } })),
+    parseDOM: HEADING_LEVELS.map((level) => ({ tag: `h${level}`, attrs: { level }, preserveWhitespace: false })),
     toDOM: (node) => [`h${node.attrs.level}`, 0],
   },
 
@@ -400,19 +419,31 @@ export const nodes: { [name in NodeName]: NodeSpec } = {
 };
 
 export const marks: { [name in MarkName]: MarkSpec } = {
+  // `run` is not a property of the link, it is what tells one link from the one beside it. Marks
+  // compare by type and attributes, and a document has no way to hold two adjacent leaves whose
+  // marks compare equal: `Fragment.fromArray` welds the text nodes into one and the serializer's
+  // own fold groups by the same equality, so `[a](/)[b](/)` was a single link before anything in
+  // the app could see it was two. It alternates between 0 and 1 rather than counting, so it leaves
+  // the default on every link that has no neighbour to be told apart from, which is every link in
+  // very nearly every file, and so a block re-parsed on its own gives the same number back.
+  //
+  // The DOM half is not decoration. prosemirror-view re-parses the editor's own DOM after some
+  // input, and a pair that came out of that parse without `data-run` is a pair merged back into
+  // one between the keystroke and the save.
   link: {
     inclusive: false,
     attrs: {
       href: { default: null, validate: "string|null" },
       title: { default: null, validate: "string|null" },
+      run: { default: 0, validate: "number" },
     },
     parseDOM: [
       {
         tag: "a[href]",
-        getAttrs: (dom) => ({ href: dom.getAttribute("href"), title: dom.getAttribute("title") }),
+        getAttrs: (dom) => ({ href: dom.getAttribute("href"), title: dom.getAttribute("title"), run: dom.getAttribute("data-run") === "1" ? 1 : 0 }),
       },
     ],
-    toDOM: (mark) => ["a", { href: mark.attrs.href, title: mark.attrs.title }, 0],
+    toDOM: (mark) => ["a", { href: mark.attrs.href, title: mark.attrs.title, "data-run": mark.attrs.run ? "1" : null }, 0],
   },
 
   strong: {

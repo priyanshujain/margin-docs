@@ -43,6 +43,9 @@ export interface ProofTarget {
   left: number;
   top: number;
   bottom: number;
+  /** True when a chord opened the menu rather than a pointer, which is the whole of what decides
+   * whether the menu takes focus. src/components/ProofPopover.tsx says why a click must not. */
+  fromKeyboard: boolean;
 }
 
 /** "missing" is both a checker that said no and a command that was not there to ask. */

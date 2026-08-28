@@ -246,6 +246,21 @@ export async function mockCall<T>(command: string, args?: Record<string, unknown
       return nodeFor(entryAt(root.path)) as unknown as T;
     }
 
+    case "sweep_documents": {
+      const root = roots.find((r) => r.id === (a.rootId as unknown as string));
+      if (!root) throw new Error(`no such root: ${a.rootId as unknown as string}`);
+      const limit = a.limit as unknown as number;
+      // One path past the limit, the way `documents_for_sweep` does it, because that is how the
+      // caller tells a folder that exactly fills its budget from one that goes over it. The
+      // fixture has no ignore files in it, so what makes this different from `tree_read` on real
+      // disk does not show here; what a browser and Playwright need is that the command answers at
+      // all, since a sweep that throws reports every move as partial.
+      return subtree(root.path)
+        .filter((e) => !e.dir && kindOf(e) === "markdown")
+        .map((e) => e.path)
+        .slice(0, limit + 1) as unknown as T;
+    }
+
     case "reveal_in_finder":
     case "open_external":
       // Nothing to hand a file to in a browser tab, so say so rather than looking broken.

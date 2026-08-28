@@ -230,6 +230,7 @@ pub fn run() {
             fs::root_open,
             fs::root_close,
             fs::tree_read,
+            fs::sweep_documents,
             fs::reveal_in_finder,
             fs::open_external,
             fs::file_read,

@@ -20,7 +20,7 @@ import type { CommandId } from "./commands";
  */
 export type KeyContext = "global" | "document" | "overlay";
 
-export type BindingGroup = "File" | "Navigation" | "Search" | "View" | "App";
+export type BindingGroup = "File" | "Navigation" | "Search" | "Editing" | "View" | "App";
 
 interface BindingBase {
   /** Every combo that runs it. The sheet shows them all; the dispatcher accepts any. */
@@ -81,6 +81,19 @@ export const BINDINGS: readonly Binding[] = [
     allowInInput: true,
   },
 
+  // The Mac's own key for this. AppKit gives every NSTextView Cmd+; for "Check Spelling", so it is
+  // the one chord a user is liable to try before reading anything, and it is free: nothing else in
+  // this table binds it and neither does any extension in src/editor, whose chords are all Mod with
+  // a letter, a digit or an editing key (src/editor/fits.test.ts enumerates them). Marked for input
+  // because the caret is in the contenteditable document every time this is pressed.
+  {
+    keys: ["cmd+;"],
+    command: "correct-spelling",
+    context: "document",
+    group: "Editing",
+    allowInInput: true,
+  },
+
   {
     keys: ["cmd+\\"],
     command: "toggle-sidebar",
@@ -104,7 +117,14 @@ export const BINDINGS: readonly Binding[] = [
   },
 ];
 
-export const GROUPS: readonly BindingGroup[] = ["File", "Navigation", "Search", "View", "App"];
+export const GROUPS: readonly BindingGroup[] = [
+  "File",
+  "Navigation",
+  "Search",
+  "Editing",
+  "View",
+  "App",
+];
 
 const isMac =
   typeof navigator !== "undefined" && /mac|iphone|ipad/i.test(navigator.userAgent ?? "");

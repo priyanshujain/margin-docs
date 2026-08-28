@@ -38,6 +38,13 @@
 // line is what ends an html block, so a paste of two paragraphs into one wrote them through the
 // middle of a preserved `<Chart ... />` and the file came back as a heading, two paragraphs and a
 // list with no raw block in it. `holdsText` in src/editor/fits.ts is that question.
+//
+// And the sixth is that question asked of the wrong string. It read the clipboard and not the block
+// the clipboard was going into, so a paste of whole lines, which carries the line ending they were
+// copied with, put its newline against the newline already at the end of the line it landed on: no
+// blank line in the payload, a blank line in the raw block, nothing refused and no toast. A drop
+// was worse and asked nothing at all, and it is the one route that cannot be talked round, since a
+// drop is the dragged content itself rather than something reparsed against where it lands.
 
 import { Extension } from "@tiptap/core";
 import type { Editor, JSONContent } from "@tiptap/core";
@@ -47,7 +54,7 @@ import type { EditorState } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import { __pastedCells as pastedCells, isInTable } from "@tiptap/pm/tables";
 import { assetWrite } from "../api/files";
-import { carriesBlocks, fits, holdsText, place, placeable } from "./fits";
+import { carriesBlocks, fits, holdsText, inRaw, place, placeable, touchesRaw } from "./fits";
 
 /**
  * This app's own paste handler, named so that a test can find it in the plugin list and say where
@@ -270,7 +277,18 @@ export function createPaste(context: PasteContext): Extension {
               // a raw block arrives as one text node with the newlines still in it and no block
               // boundary anywhere: `carriesBlocks` says no, the insert is ProseMirror's, and the
               // bytes it writes end the html block halfway through the user's tag.
-              if (!carriesBlocks(slice) && takesText(view.state)) {
+              //
+              // A raw block never stands aside, whatever the slice looks like. "Better" above
+              // means marks, lists and tables kept, and a raw block holds text and nothing else,
+              // so what is better there is a hard break put into a node whose content is `text*`
+              // and a mark applied where `marks` is "", neither of which ProseMirror refuses: an
+              // inline slice carrying one break turned somebody's `<div>` into two raw blocks with
+              // a stray backslash written into the file. What this branch measures is
+              // `sliceText`, which is only what ProseMirror inserts when the slice is a bare text
+              // node, so standing aside on the strength of it is answering for a different insert
+              // from the one that happens. The text path below is the only one that leaves the
+              // block whole, and a raw target falls through to it.
+              if (!carriesBlocks(slice) && takesText(view.state) && !touchesRaw(view.state)) {
                 if (holdsText(view.state, sliceText(slice))) return false;
                 event.preventDefault();
                 context.onError(BLANK_LINE);
@@ -300,10 +318,22 @@ export function createPaste(context: PasteContext): Extension {
              * meant by pointing at the middle of a fence.
              */
             handleDrop(view: EditorView, event: DragEvent, slice: Slice) {
-              if (!carriesBlocks(slice)) return false;
               const at = view.posAtCoords({ left: event.clientX, top: event.clientY });
               if (!at) return false;
-              if (fits(view.state.doc.resolve(at.pos), view.state.schema.nodes.paragraph)) return false;
+              const $at = view.state.doc.resolve(at.pos);
+              // A drop into a raw block is refused whatever it carries, and refused before the
+              // slice is looked at. A paste is reparsed against the block the caret is in, so one
+              // that lands in a raw block arrives as text; a drop is not, it is the dragged
+              // content itself, so an inline one carries hard breaks and marks into a node whose
+              // content is text and nothing else, and a plain text one carries whatever blank
+              // lines were in it. The block is the file's own bytes and a drop is a pointer
+              // gesture with nothing to ask, so nothing goes in.
+              if (inRaw($at)) {
+                event.preventDefault();
+                return true;
+              }
+              if (!carriesBlocks(slice)) return false;
+              if (fits($at, view.state.schema.nodes.paragraph)) return false;
               event.preventDefault();
               return true;
             },

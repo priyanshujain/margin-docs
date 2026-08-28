@@ -51,7 +51,9 @@ describe("the modelled inventory", () => {
     expect([...marks].sort()).toEqual(["code", "em", "link", "strikethrough", "strong"]);
 
     const link = paragraph.child(paragraph.childCount - 2);
-    expect(link.marks[0].attrs).toEqual({ href: "./a.md", title: "T" });
+    // `run` is 0 because the link has no link beside it. It is only ever the other value on a link
+    // whose immediate neighbour goes to the same place, which is what keeps the pair two marks.
+    expect(link.marks[0].attrs).toEqual({ href: "./a.md", title: "T", run: 0 });
   });
 
   it("maps images, hard breaks and inline math", () => {

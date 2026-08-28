@@ -33,6 +33,7 @@ import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import type { Command, Transaction } from "@tiptap/pm/state";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import {
+  CellSelection,
   TableMap,
   addColumnAfter,
   addColumnBefore,
@@ -48,6 +49,7 @@ import {
   tableEditing,
 } from "@tiptap/pm/tables";
 import type { TableRect } from "@tiptap/pm/tables";
+import type { EditorView } from "@tiptap/pm/view";
 import type { ColumnAlign } from "../../model/doc";
 import { overCells } from "../fits";
 import type { TableOp } from "../index";
@@ -301,8 +303,70 @@ const typing = new Plugin({
   key: typingKey,
   props: {
     handleTextInput: (view) => overCells(view.state),
+    handleDOMEvents: {
+      compositionstart: collapseRectangle,
+      // The same DOM level insert arriving without a composition behind it. macOS's Replace menu
+      // and its autocorrect send `insertReplacementText`, dictation sends `insertText`, and neither
+      // of them goes anywhere near `handleTextInput`. A printable character over a rectangle never
+      // reaches here, because prosemirror-view's keypress handler calls preventDefault for any
+      // selection that is not one text range inside one textblock, and nor does Backspace, which
+      // the keymap at the end of this file claims first.
+      beforeinput: (view, event) =>
+        event.inputType.startsWith("insert") ? collapseRectangle(view) : false,
+    },
   },
 });
+
+/**
+ * The same rule for a composition, which is the one gesture a handler cannot refuse.
+ *
+ * `handleTextInput` above is offered a character the browser was about to insert. An IME never
+ * produces one: the browser fires compositionstart, writes the composition into the DOM itself, and
+ * prosemirror-view reads the result back out afterwards. So the guard above is not bypassed by a
+ * mistake in it, it is simply not on the route, and neither is anything else that answers true or
+ * false.
+ *
+ * Claiming the event does not help and it makes things worse. compositionstart is not cancelable,
+ * so preventDefault does nothing and the IME composes whatever a handler returns. What returning
+ * true DOES do is stop prosemirror-view's own compositionstart from running, which leaves
+ * `view.composing` false while a real composition is in progress, and every DOM write the IME makes
+ * then reads back as an ordinary edit.
+ *
+ * What is decidable is where the composition lands, and that is decided before it starts. Left
+ * alone, prosemirror-view's compositionstart replaces the rectangle with whatever
+ * `selectionFromDOM` makes of a DOM range spanning cells, which is a text selection, because
+ * prosemirror-tables only hands back a cell selection while a mouse drag is still down.
+ * prosemirror-tables then either collapses that on to the whole content of one cell, and the
+ * composition replaces it, or leaves it spanning cell boundaries, and prosemirror-view replaces
+ * across them and joins the cells and the rows away. Both are the rectangle destroyed by a key
+ * pressed to type one word, and the second one never reaches `handleTextInput` at all: a change
+ * that crosses a textblock is dispatched without the offer ever being made.
+ *
+ * So the rectangle is collapsed first, to a caret at the end of the cell the drag started in, and
+ * the composition lands there. Nothing is replaced and no boundary is crossed, which is the promise
+ * the guard above makes for an ordinary character: the rows and the columns survive it. False is
+ * returned rather than true, so prosemirror-view's own compositionstart still runs, against the
+ * caret this left it. The dispatch is synchronous for the same reason: the DOM selection has to be
+ * the caret before the browser applies the first composed character, and a microtask is already
+ * too late.
+ *
+ * `instanceof` rather than `overCells`, which asks this exact question in src/editor/fits.ts and is
+ * what the guard above uses. What is needed here is not the boolean but the narrowing that comes
+ * with it, since `$anchorCell` only exists on the cell selection.
+ */
+function collapseRectangle(view: EditorView): false {
+  const { selection } = view.state;
+  if (!(selection instanceof CellSelection)) return false;
+  const cell = selection.$anchorCell.nodeAfter;
+  if (!cell) return false;
+  // The end of the anchor cell's content, so the composition appends rather than replacing. A cell
+  // holds inline content in src/model/schema.ts and no blocks at all, which is what makes that
+  // position a caret already: `near` takes it as it stands rather than searching forward out of the
+  // cell for one, which is where it would have to go if a paragraph closed in front of it.
+  const at = selection.$anchorCell.pos + 1 + cell.content.size;
+  view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(at))));
+  return false;
+}
 
 export const Tables = Extension.create({
   name: "tables",

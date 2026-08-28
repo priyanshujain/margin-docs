@@ -20,6 +20,7 @@
 // than the editor ever does, so the promise that opening a folder writes nothing into it matters
 // more here than anywhere: no sidecar, no lock, no mtime bumped, nothing.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering as Memory};
@@ -52,6 +53,14 @@ const LAST_INDEXED_KEY: &str = "last_indexed";
 /// how long a search can be kept waiting during a rebuild: small enough that nobody notices, large
 /// enough that a pass is not one transaction per file.
 const BATCH: usize = 64;
+
+/// Largest file whose text is read into the full text table. Nothing anybody typed is this big: it
+/// is an export, a dataset or a log that happens to end in .txt, and an appended-to log is rewritten
+/// on every debounce window for as long as the app is open, so the whole of it would be read and
+/// tokenised again every time. The row is still written, because the path is worth finding in quick
+/// open and only the text is left out, which is the same answer this file already gives a document
+/// that is not UTF-8.
+const BODY_MAX: u64 = 8 * 1024 * 1024;
 
 /// How often a pass says where it has got to. The event drives a status line, not a progress bar
 /// anybody watches closely, and emitting per file would cost more than the indexing.
@@ -199,8 +208,13 @@ pub fn open(app: &AppHandle) -> Result<(), String> {
 fn connect(file: &Path) -> Result<Connection, String> {
     let conn = Connection::open(file).map_err(|e| format!("{}: {e}", file.display()))?;
     // WAL so a search reads while the indexer writes, and NORMAL because every byte in here is
-    // derived from a file on disk: the worst a power cut can cost is a rescan.
-    conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")
+    // derived from a file on disk: the worst a power cut can cost is a rescan. The size limit is
+    // what makes the write ahead log give its space back after a checkpoint rather than keeping the
+    // high water mark of the largest rebuild for the life of the database, which on a big folder is
+    // the whole of it left sitting in the app data directory until the file is deleted.
+    conn.execute_batch(
+        "PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA journal_size_limit = 33554432;",
+    )
         .map_err(|e| format!("{}: {e}", file.display()))?;
     migrate(&conn)?;
     Ok(conn)
@@ -367,22 +381,92 @@ fn work(app: AppHandle, jobs: mpsc::Receiver<Job>) {
         pass
     };
 
-    for job in jobs {
-        let Ok(index) = state(&app) else { continue };
-        let outcome = match job {
-            Job::Rebuild(roots) => {
-                let done = rebuild_pass(&app, &index, &roots, next());
-                index.rebuilding.store(false, Memory::SeqCst);
-                done
-            }
-            Job::Scan(root) => scan_pass(&app, &index, std::slice::from_ref(&root), next()),
-            Job::Forget(root_id) => with_conn(&index, |conn| forget_root_rows(conn, &root_id)),
-            Job::Changed(path) => changed(&app, &index, &path, next()),
-            Job::Removed(path) => with_conn(&index, |conn| remove_under(conn, &path)),
-        };
-        if let Err(e) = outcome {
-            eprintln!("search index: {e}");
+    // One blocking wait for the first job, then everything else already sitting behind it, taken as
+    // a batch rather than one at a time. When the kernel drops filesystem events the watcher reports
+    // the root itself as modified, and that job is a walk and a sweep of every folder the user has
+    // open: a two minute build that keeps the kernel dropping queues hundreds of them, and doing
+    // each one in turn means repeating the same full walk hundreds of times while the index falls
+    // further behind the disk with every repeat. It has to be collapsed on this side of the channel
+    // and not by bounding it, because the sender is the debounce callback and holds up the next
+    // batch of events for as long as it is made to wait.
+    while let Ok(first) = jobs.recv() {
+        let mut batch = vec![first];
+        while let Ok(more) = jobs.try_recv() {
+            batch.push(more);
         }
+        for job in coalesce(batch) {
+            let Ok(index) = state(&app) else { continue };
+            // A panic in here would take this thread with it and nothing above would notice. The
+            // sender lives in a OnceLock that is never replaced, so every later job would be dropped
+            // by `send` without a word, and search, quick open and backlinks would go on answering
+            // from the snapshot the index happened to be holding at that moment for the rest of the
+            // session. One document the indexer cannot handle is not worth that.
+            let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match job {
+                Job::Rebuild(roots) => {
+                    let done = rebuild_pass(&app, &index, &roots, next());
+                    index.rebuilding.store(false, Memory::SeqCst);
+                    done
+                }
+                Job::Scan(root) => scan_pass(&app, &index, std::slice::from_ref(&root), next()),
+                Job::Forget(root_id) => with_conn(&index, |conn| forget_root_rows(conn, &root_id)),
+                Job::Changed(path) => changed(&app, &index, &path, next()),
+                Job::Removed(path) => with_conn(&index, |conn| remove_under(conn, &path)),
+            }));
+            let outcome = match caught {
+                Ok(outcome) => outcome,
+                Err(_) => {
+                    // A rebuild that unwound never reached its own `store`, and the flag left set is
+                    // the status line stuck on "indexing" and every later rebuild declining to run.
+                    index.rebuilding.store(false, Memory::SeqCst);
+                    // Clearing the poison is safe because there is no half written state to inherit:
+                    // whatever transaction the panic happened inside was dropped on the way out, and
+                    // dropping a transaction rolls it back, so the database is exactly where it was
+                    // before the job started. Leaving the poison would fail every later lock instead,
+                    // which is the same frozen index arrived at by a different route.
+                    index.conn.clear_poison();
+                    index.status.clear_poison();
+                    let mut status = status_of(&index).unwrap_or_default();
+                    status.phase = "error".to_string();
+                    status.error =
+                        Some("the indexer hit a document it could not handle".to_string());
+                    publish(&app, &index, status);
+                    Err("a job panicked and was abandoned".to_string())
+                }
+            };
+            if let Err(e) = outcome {
+                eprintln!("search index: {e}");
+            }
+        }
+    }
+}
+
+/// One drained batch with the jobs that have been overtaken taken out of it.
+///
+/// Nothing is reordered, because the order is what makes the queue correct in the first place. A job
+/// is dropped only when a later job in the same drain speaks about the same path, and that later one
+/// is the one the disk now agrees with, so a create that followed a delete still wins and a delete
+/// that followed a create still wins. It is the rule `watch::merge` applies within one debounced
+/// batch, applied again across the batches that piled up while the worker was busy. A rebuild, a
+/// scan and a forget name no path at all and are always kept.
+fn coalesce(batch: Vec<Job>) -> Vec<Job> {
+    let mut last: HashMap<PathBuf, usize> = HashMap::new();
+    for (at, job) in batch.iter().enumerate() {
+        if let Some(path) = job_path(job) {
+            last.insert(path.to_path_buf(), at);
+        }
+    }
+    batch
+        .into_iter()
+        .enumerate()
+        .filter(|(at, job)| job_path(job).is_none_or(|path| last.get(path) == Some(at)))
+        .map(|(_, job)| job)
+        .collect()
+}
+
+fn job_path(job: &Job) -> Option<&Path> {
+    match job {
+        Job::Changed(path) | Job::Removed(path) => Some(path),
+        _ => None,
     }
 }
 
@@ -397,7 +481,16 @@ fn rebuild_pass(
 ) -> Result<(), String> {
     let ids: Vec<String> = roots.iter().map(|root| root.id.clone()).collect();
     with_conn(index, |conn| forget_roots_except(conn, &ids))?;
-    scan_pass(app, index, roots, pass)
+    scan_pass(app, index, roots, pass)?;
+    // FTS5 leaves a segment behind for every rewrite of a row, and a document is rewritten on every
+    // save, so an index that is never merged is one a long session slowly makes worse at the one
+    // thing it is for. A full pass is the moment it is fair to do the merging: the user has already
+    // asked for a walk of every folder they have open, and this costs less than the walk did.
+    with_conn(index, |conn| {
+        conn.execute("INSERT INTO docs_fts(docs_fts) VALUES('optimize')", [])
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })
 }
 
 /// One pass over a set of roots: walk them all first so the total is known before the first file is
@@ -457,6 +550,15 @@ fn changed(app: &AppHandle, index: &Index, path: &Path, pass: i64) -> Result<(),
         // Gone again between the event and here, which a debounce window makes perfectly ordinary.
         return with_conn(index, |conn| remove_under(conn, path));
     };
+    if is_skipped_below(&root.path, path) {
+        // The walk hides these folders and so must the watcher, which otherwise reaches the indexer
+        // with everything the walk refused to look at. An npm install under an open root is a row
+        // and a body for every README in node_modules, thousands of them, and a sweep will not take
+        // them back out because they were written by the pass that is sweeping. Checked after the
+        // stat rather than before it so a deletion under one of these folders is still applied,
+        // which is what takes away rows an earlier build of this file put there.
+        return Ok(());
+    }
     if !meta.is_dir() {
         if !is_document(path) {
             return Ok(());
@@ -571,6 +673,21 @@ fn is_document(path: &Path) -> bool {
     matches!(crate::fs::kind_for(path, false), "markdown" | "text")
 }
 
+/// Whether a path sits inside one of the folders the tree never shows.
+///
+/// Only the four unconditional names, and deliberately not the folder's gitignore: these are the
+/// ones the tree hides whatever a gitignore says, and building an ignore matcher for every event
+/// that arrives would cost more than the indexing it saves. A path that is the root itself strips to
+/// an empty relative path with no components at all, so the watcher's "the kernel dropped events,
+/// here is the root" report is not caught by this and still rescans everything.
+fn is_skipped_below(root: &str, path: &Path) -> bool {
+    let Ok(rel) = path.strip_prefix(root) else {
+        return false;
+    };
+    rel.components()
+        .any(|part| crate::fs::ALWAYS_SKIPPED.contains(&part.as_os_str().to_string_lossy().as_ref()))
+}
+
 /// One document into the three tables, or one stat if the file has not moved since the last pass.
 ///
 /// The mtime shortcut is what makes a rescan of an unchanged folder cost a walk rather than a read
@@ -602,8 +719,14 @@ fn index_document(
     }
 
     // A file that is not UTF-8 is indexed with no text rather than skipped. Its path is still worth
-    // finding in quick open, and refusing the whole row would make it invisible instead.
-    let body = fs::read_to_string(path).unwrap_or_default();
+    // finding in quick open, and refusing the whole row would make it invisible instead. A file
+    // past `BODY_MAX` is given the same answer for the same reason: nothing an extension can tell
+    // us says how big a .txt is, and the stat that decided the mtime above already knows.
+    let body = if meta.len() > BODY_MAX {
+        String::new()
+    } else {
+        fs::read_to_string(path).unwrap_or_default()
+    };
     let title = title_for(path, &body);
     let name = path
         .file_name()
@@ -1188,7 +1311,13 @@ fn snippet_of(line: &str) -> (String, Vec<MatchRange>) {
     if tail.saturating_sub(from) < SNIPPET_MAX {
         from = tail.saturating_sub(SNIPPET_MAX).max(lead);
     }
-    let to = tail.min(from + SNIPPET_MAX);
+    // `from` can end up past `tail` when the line has no text left on it at all. A document is free
+    // to contain the control character the marks are made of, and every line carrying one is read
+    // as a line with a match on it here whether there is anything else on it or not, so a line that
+    // is one stray mark and some spaces reaches this. `tail` is at or after `from` in every ordinary
+    // case, so this only ever changes that one: what comes out is an empty snippet with no ranges
+    // rather than a slice that starts after it ends.
+    let to = tail.max(from).min(from + SNIPPET_MAX);
 
     let mut out = String::new();
     let mut shift = from;

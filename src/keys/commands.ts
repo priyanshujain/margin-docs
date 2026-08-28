@@ -44,6 +44,7 @@ export type CommandId =
   | "editor-width-normal"
   | "editor-width-wide"
   | "toggle-spelling"
+  | "correct-spelling"
   | "shortcuts"
   | "settings"
   | "check-updates"
@@ -317,6 +318,18 @@ const TABLE: Record<CommandId, Omit<Command, "id">> = {
     label: "Check Spelling While Typing",
     palette: true,
     run: () => useProofing.getState().toggle(),
+  },
+
+  // Dispatched, unlike the one above it, because its whole result is the correction menu on screen
+  // and the component that draws that menu is the only thing here that knows where the caret is.
+  //
+  // Not in the palette either. What it acts on is the misspelling beside the caret, which is a
+  // target the palette cannot show a row for, and by the time a command name has been typed at a
+  // field the caret is no longer the one the user meant.
+  "correct-spelling": {
+    label: "Correct Spelling",
+    palette: false,
+    run: () => dispatch("correct-spelling"),
   },
 
   shortcuts: { label: "Keyboard Shortcuts", palette: true, run: () => dispatch("shortcuts") },

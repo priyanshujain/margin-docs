@@ -57,9 +57,22 @@
 }
 
 .proof-suggestion:hover,
-.proof-action:hover {
+.proof-action:hover,
+.proof-suggestion:focus-visible,
+.proof-action:focus-visible {
   background: var(--accent-wash);
   color: var(--ink);
+}
+
+/* The keyboard's item is drawn as the pointer's is, plus the app's own focus ring from app.css,
+   because a menu that marked the focused row differently from the hovered one would be claiming
+   there are two selections in it. Only the offset is changed: at the shared 2px the ring sits
+   outside the five pixels of padding the popover has and is clipped by its own border, so it is
+   turned inward to the same distance instead. The colour stays --accent, which is the token, and
+   is what makes this legible on both papers. */
+.proof-suggestion:focus-visible,
+.proof-action:focus-visible {
+  outline-offset: -2px;
 }
 
 .proof-none {

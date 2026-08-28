@@ -296,17 +296,16 @@ async function pass(view: EditorView): Promise<void> {
   prune(blocks);
 }
 
-/** The misspelling under a position, if the menu should open over one. */
-function menuAt(view: EditorView, pos: number): boolean {
-  // A document held open while a conflict is resolved is one nothing may edit, and a menu whose
-  // every item is an edit has nothing to offer there. The underlines stay; the menu does not open.
-  if (!view.editable) return false;
-  const decorations = proofingKey.getState(view.state);
-  if (!decorations) return false;
-  const found = decorations.find(pos, pos);
-  if (found.length === 0) return false;
-  // A position at the seam between two words touches both, so a hit that actually contains it wins.
-  const hit = found.find((deco) => deco.from < pos && pos < deco.to) ?? found[0];
+/**
+ * Puts the menu over one underlined word, whichever of the three ways in found it.
+ *
+ * `fromKeyboard` is the only thing that separates a chord from a pointer once the word is known,
+ * and the menu reads it to decide whether to take focus. A click has already put the caret where
+ * the user wanted it, so a menu that took focus from that click would have broken the commoner half
+ * of what clicking a word means; a chord has no other way of reaching the items it has just
+ * offered.
+ */
+function openFor(view: EditorView, hit: Decoration, fromKeyboard: boolean): boolean {
   const spec = hit.spec as { word?: unknown; suggestions?: unknown };
   if (typeof spec.word !== "string") return false;
 
@@ -324,8 +323,59 @@ function menuAt(view: EditorView, pos: number): boolean {
     top: start.top,
     // A word that wraps across two lines ends on the lower one, which is where the menu belongs.
     bottom: Math.max(start.bottom, end.bottom),
+    fromKeyboard,
   });
   return true;
+}
+
+/** The misspelling under a position, if the menu should open over one. */
+function menuAt(view: EditorView, pos: number): boolean {
+  // A document held open while a conflict is resolved is one nothing may edit, and a menu whose
+  // every item is an edit has nothing to offer there. The underlines stay; the menu does not open.
+  if (!view.editable) return false;
+  const decorations = proofingKey.getState(view.state);
+  if (!decorations) return false;
+  const found = decorations.find(pos, pos);
+  if (found.length === 0) return false;
+  // A position at the seam between two words touches both, so a hit that actually contains it wins.
+  const hit = found.find((deco) => deco.from < pos && pos < deco.to) ?? found[0];
+  return openFor(view, hit, false);
+}
+
+/**
+ * The same menu, opened by a chord instead of by a pointer, over the misspelling at the caret or
+ * the nearest one to it.
+ *
+ * Nearest within the caret's own paragraph and no further. The menu is placed at the viewport
+ * coordinates of the word it is about, so a search that ran to the end of the document would open a
+ * menu somewhere off screen about a mistake the user cannot see, and correcting a word you are not
+ * looking at is not what the key was pressed for. Inside a paragraph the distance is almost always
+ * zero or a character or two: this is the word just typed, with the caret still sitting against its
+ * end.
+ *
+ * False when there is nothing to offer, which is what the caller turns into a line of explanation.
+ */
+export function openSpellingMenu(): boolean {
+  const view = activeView;
+  if (!view || view.isDestroyed || !view.editable) return false;
+  const decorations = proofingKey.getState(view.state);
+  if (!decorations) return false;
+
+  const $head = view.state.selection.$head;
+  if (!$head.parent.isTextblock) return false;
+
+  let best: Decoration | null = null;
+  let nearest = Infinity;
+  for (const deco of decorations.find($head.start(), $head.end())) {
+    const gap = $head.pos < deco.from ? deco.from - $head.pos : Math.max($head.pos - deco.to, 0);
+    // Strictly nearer, so a caret sitting exactly between two of them takes the earlier word,
+    // which is the one it was most likely just finished typing.
+    if (gap >= nearest) continue;
+    best = deco;
+    nearest = gap;
+  }
+  if (!best) return false;
+  return openFor(view, best, true);
 }
 
 /**

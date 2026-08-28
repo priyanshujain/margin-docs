@@ -22,14 +22,17 @@ bump the patch number, or give one to set it. The workflow bumps `tauri.conf.jso
 and `src-tauri/Cargo.toml` together, commits that to main, tags it, and builds the tag rather than
 whatever main happens to be by then.
 
-It builds a universal macOS bundle and an x86_64 Linux one, and publishes nothing until both have
-landed. The last job downloads `latest.json` and refuses to take the release out of draft unless
-`darwin-aarch64`, `darwin-x86_64` and `linux-x86_64` are all present in it. A half-populated
-manifest is worse than no release at all: the updater would offer an update to the platforms that
-made it and error on the ones that did not.
+It builds one universal macOS bundle and publishes nothing until it has landed. The last job
+downloads `latest.json` and refuses to take the release out of draft unless `darwin-aarch64` and
+`darwin-x86_64` are both present in it. One universal build writes both of those keys, pointing
+them at the same archive and the same signature, because an installed copy asks the manifest for
+the architecture it is running on and never for a universal one. A half-populated manifest is worse
+than no release at all: the updater would offer an update to the platforms that made it and error
+on the ones that did not.
 
-Linux builds on Ubuntu 22.04 on purpose. The bundle will not run on anything older than the glibc
-it was linked against, and 22.04 is the oldest baseline worth supporting.
+Linux is not built. It was until recently, because this pipeline was copied from margin-calendar,
+which ships on Linux. This app does not, so the row and the manifest key it required are gone and
+the release runs on one macOS runner.
 
 Windows is not built. Nothing in `tauri.conf.json` targets it and the app has never claimed it.
 

@@ -90,6 +90,19 @@ const EMAIL_SHAPED = /^[^\s<>@]+@[^\s<>@]+$/;
 const ANGLE_SHAPED = /^[A-Za-z][A-Za-z0-9+.-]+:[^\s<>]*$/;
 
 /**
+ * What the writer could not put in the file, filled in on the way past.
+ *
+ * There is one of these and the comment above `separate` is the whole of why: a raw block beside a
+ * list whose edit no spelling can hold is written from the bytes the file gave it. That decision
+ * stands. What this adds is that it is not made in silence, because a caller that cannot see it
+ * marks the buffer clean over bytes the user's edit is not in. A caller that does not care passes
+ * nothing.
+ */
+export interface Refused {
+  rawBlock: boolean;
+}
+
+/**
  * The document as the body of a file, which is one question more than the document as blocks.
  *
  * Everything else in this file is decided about a block, or about the seam between one block and
@@ -112,8 +125,8 @@ const ANGLE_SHAPED = /^[A-Za-z][A-Za-z0-9+.-]+:[^\s<>]*$/;
  * first save and then gained a byte every save for the rest of its life. `serializeMarkdown` knows
  * whether it is about to put a prefix in front and is the only thing that can answer, so it does.
  */
-export function serializeBody(doc: ProseMirrorNode, atStartOfFile = true): string {
-  const tree = docToMdast(doc);
+export function serializeBody(doc: ProseMirrorNode, atStartOfFile = true, refused?: Refused): string {
+  const tree = docToMdast(doc, refused);
   const body = stringifyMdast(tree);
   if (!atStartOfFile || !swallowed(body)) return body;
 
@@ -133,14 +146,14 @@ function swallowed(body: string): boolean {
   return isFrontmatterNode(parseToMdast(body).children[0]);
 }
 
-export function docToMdast(doc: ProseMirrorNode): Root {
+export function docToMdast(doc: ProseMirrorNode, refused?: Refused): Root {
   const blocks: RootContent[][] = [];
   const nodes: ProseMirrorNode[] = [];
   doc.forEach((child) => {
     nodes.push(child);
     blocks.push(verifiedBlock(child));
   });
-  separate(blocks, nodes);
+  separate(blocks, nodes, refused);
   return { type: "root", children: blocks.flat() };
 }
 
@@ -231,8 +244,25 @@ function listToMdast(node: ProseMirrorNode, ordered: boolean, start: number): Ro
   // cannot be written a single line apart whatever the attribute says, and one of those makes the
   // whole list loose here rather than on the next save.
   const loose = node.attrs.tight !== true || contents.some(runsTogether);
+  if (!loose) contents.forEach(respellRules);
   const children: ListItem[] = contents.map((content, index) => ({ type: "listItem", spread: loose, checked: checks[index], children: content }));
   return ordered ? { type: "list", ordered: true, start, spread: loose, children } : { type: "list", ordered: false, start: null, spread: loose, children };
+}
+
+/**
+ * The rules an item has to spell the other way, asked only of an item about to be written tight.
+ *
+ * `---` is the house rule and is a setext underline wherever a paragraph is still open above it,
+ * which inside a tight item is the only place the line under a paragraph can be. `***` is the same
+ * rule in the one spelling that interrupts a paragraph, and it is the same swap `serializeBody`
+ * makes for a rule that lands on the first byte of a file. A loose item keeps the house spelling,
+ * because the blank line in front of it has already closed the paragraph.
+ */
+function respellRules(blocks: Array<BlockContent | DefinitionContent>): void {
+  for (let index = 1; index < blocks.length; index += 1) {
+    const right = blocks[index];
+    if (right.type === "thematicBreak" && leftOpen(blocks[index - 1]) === "paragraph") withOtherRule(right, true);
+  }
 }
 
 /**
@@ -240,10 +270,12 @@ function listToMdast(node: ProseMirrorNode, ordered: boolean, start: number): Ro
  *
  * Two blocks written flush are two blocks only when the second one opens a block of its own, which
  * is less often than it looks. A paragraph is still open at the end of its last line, so the line
- * under it joins it: a second paragraph runs on into the first, and `---` under a paragraph is a
- * setext heading rather than a rule. A table and an html block are worse than open: every line up
- * to the next blank one is another row or more html, whatever it says. And two quotes written
- * flush are one quote, because the second one's markers are read as more of the first.
+ * under it joins it, and a second paragraph runs on into the first. A rule is the one construct
+ * that is only half caught by that: `---` under a paragraph is a setext heading rather than a rule,
+ * but `***` is the same rule in a spelling that interrupts, and `respellRules` has already put the
+ * item's rules into it by the time this is asked. A table and an html block are worse than open:
+ * every line up to the next blank one is another row or more html, whatever it says. And two quotes
+ * written flush are one quote, because the second one's markers are read as more of the first.
  *
  * Only neighbours are asked about, because the blocks are written in order and a pair of them is
  * the whole of what stands between one block and the next.
@@ -312,6 +344,10 @@ function opensBlock(block: BlockContent | DefinitionContent): boolean {
     case "blockquote":
     case "table":
     case "html":
+    // A rule interrupts a paragraph in every spelling markdown has for it except `---`, which is a
+    // setext underline there, and `respellRules` has already put the item's rules into the other
+    // one by the time this is asked.
+    case "thematicBreak":
       return true;
     case "list": {
       // A list interrupts a paragraph only when it counts from one and its first item says
@@ -765,20 +801,24 @@ function verifiedBlock(node: ProseMirrorNode): RootContent[] {
  * block, in every document that has no list beside it, is written exactly as it always was.
  * src/editor/ owns whether the edit should have been possible at all.
  */
-function separate(blocks: RootContent[][], nodes: ProseMirrorNode[]): void {
+function separate(blocks: RootContent[][], nodes: ProseMirrorNode[], refused?: Refused): void {
   // Twice at the most: the second pass is for the lists settled against bytes the first pass then
   // put back, and a block already holding its source is not put back again, so it cannot go round.
-  if (spellEveryList(blocks, nodes)) spellEveryList(blocks, nodes);
+  if (spellEveryList(blocks, nodes, refused)) spellEveryList(blocks, nodes, refused);
 }
 
 /** One pass over every list, and whether any raw block beside one gave its edit up to it. */
-function spellEveryList(blocks: RootContent[][], nodes: ProseMirrorNode[]): boolean {
+function spellEveryList(blocks: RootContent[][], nodes: ProseMirrorNode[], refused?: Refused): boolean {
   let gaveUp = false;
 
   for (let index = 0; index < blocks.length; index += 1) {
     if (listIn(blocks[index]) === null || spelledApart(blocks, index)) continue;
     if (keepSource(blocks, nodes, index - 1) || keepSource(blocks, nodes, index + 1)) {
       gaveUp = true;
+      // A flag rather than a count, and the second pass above is why: what the caller has to be
+      // told is that this save is not carrying an edit somebody made, and raising the same flag
+      // twice over the same block says exactly that once.
+      if (refused) refused.rawBlock = true;
       spelledApart(blocks, index);
     }
   }
@@ -981,7 +1021,24 @@ function sameAttrs(a: Record<string, unknown>, b: Record<string, unknown>): bool
 }
 
 function sameMarks(a: readonly Mark[], b: readonly Mark[]): boolean {
-  return a.length === b.length && a.every((mark, at) => mark.type.name === b[at].type.name && sameAttrs(mark.attrs, b[at].attrs));
+  return a.length === b.length && a.every((mark, at) => mark.type.name === b[at].type.name && sameAttrs(spelled(mark), spelled(b[at])));
+}
+
+/**
+ * A mark's attributes minus the ones no spelling of it carries, which is `run` and nothing else.
+ *
+ * `run` is not in the file. It exists so that two adjacent links to one destination are two marks
+ * rather than one, and the parser numbers it from the block it has just read, so a link whose
+ * neighbour has since been deleted carries a number the re-parse of it will not produce. Comparing
+ * it here fails a block that came back perfectly, and the ladder answers that by writing the block
+ * at a plainer fidelity: a code span holding a line ending loses it, on a paragraph nobody edited.
+ * The difference `run` exists to make is two links written as one, and that is a difference in the
+ * text and in the child count, which this walk already sees.
+ */
+function spelled(mark: Mark): Record<string, unknown> {
+  if (mark.type.name !== "link") return mark.attrs;
+  const { run: _run, ...rest } = mark.attrs;
+  return rest;
 }
 
 /**

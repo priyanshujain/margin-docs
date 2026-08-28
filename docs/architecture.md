@@ -44,6 +44,16 @@ character typed into a hand wrapped file put a backslash at the end of every lin
 `prosemirror-transform` asks the same field before it joins two blocks, so Backspace between two
 hand wrapped paragraphs rewrote the wraps in both.
 
+The heading needs all three for the same reason and was declared with none of them, which is the
+same bug wearing the one hat markdown lets an author wrap by hand. A setext heading is two lines of
+text over an underline, and mdast writes a break inside one as a backslash, so a character typed
+into a two line heading put a backslash in the user's words exactly as it used to in a paragraph.
+The first save cannot rescue it either, because a heading that has been wrapped has no ATX spelling
+to be normalised into, so it stays setext and every later keystroke re-arms the bug. The field goes
+on at every level rather than only the two that have an underline: the deeper four cannot be wrapped
+in the file, but they can hold a line ending written `&#xA;`, and at the default a keystroke turned
+that into a break the writer then swallowed as a space.
+
 The paragraph's parse rule says the opposite on purpose, and a rule's own answer outranks the
 node's. Whitespace is significant in a paragraph this editor rendered, and meaningless in a `<p>`
 off somebody else's web page, where the line endings are that page's source indentation and keeping
@@ -144,6 +154,16 @@ every construct markdown has except a list, which carries on over one and swallo
 so a list written next to preserved source is proved apart and respelled, with a wider item indent
 or the other bullet, until it is.
 
+A rule inside a list item is the same question asked from the other side, and it is the one place
+the house style has to give way rather than the seam. `---` is the house spelling and it is a setext
+underline wherever a paragraph is still open above it, which inside a tight item is the only place
+the line under the item's text can be. Reading that as "these two blocks cannot be written a line
+apart" is correct about `---` and wrong about the rule, so the writer spread the whole list to make
+room, and a tight list came back loose with its items wrapped in paragraphs they did not have. `***`
+is the same rule in the one spelling that does interrupt a paragraph, the writer already reaches for
+it when a rule lands on the first byte of a file, and a tight item now gets it. A loose item keeps
+`---`, because the blank line in front of it has already closed the paragraph.
+
 Those respellings cover every raw block a file can hand over, because a file's own raw block starts
 in the first three columns and column four is indented code. An edited one can be anything, and for
 some of them no spelling exists at all: four spaces typed into a raw block below a list makes bytes
@@ -153,6 +173,15 @@ bytes the file gave it and the edit does not reach disk that save. That is the o
 knowingly drops something the user typed, and it is the right way round: the alternative measured on
 the same file swallowed the list into the raw block and then moved bytes around inside somebody's
 html on the save after. A raw block with no list beside it is written exactly as it always was.
+
+Dropping it is the decision; dropping it in silence was the bug. The writer had no way to say it had
+happened, so the save path marked the buffer clean over bytes the edit was not in: the file stopped
+changing, the unsaved dot went out, and the only trace was the edit still sitting on screen. The
+writer now reports the refusal on the way past, the dirty flag has that as a second input beside the
+tree comparison, and the toast says which block and why the file won. The flag stands for exactly as
+long as those bytes are the file's, so a later lap of the debounce over the same unsavable block
+says nothing more, and it is deliberately kept out of the question the debounce asks, since a
+refused edit is not a difference another write could fix and re-arming for it would be a loop.
 
 Where the body starts is the other: `---` on the first line of a
 file is not a rule, it is the opening delimiter of frontmatter, and everything down to the next one
@@ -308,7 +337,21 @@ carries no HTML for ProseMirror to parse and so arrives as the empty slice, empt
 clipboard extension now declares a priority above every other extension in the tree, which puts it
 at the head of the list whatever order the extension file lists things in, and being first is
 asserted rather than believed: `src/editor/fits.test.ts` reads the built plugin list, computes the
-index of every plugin claiming a paste or a drop, and fails if anything is in front. Being first
+index of every plugin claiming a paste or a drop, and fails if anything is in front. A guard is also worth nothing when the gesture it is watching for produces no event to answer, and
+that is the sibling of the ordering fault rather than a different kind of mistake. Typing over a
+rectangle of cells is refused through `handleTextInput`, which prosemirror-view offers only for a
+character the browser was about to insert. An IME produces none: the browser writes the composition
+into the DOM itself and prosemirror-view reads the result back, and on the way there its own
+`compositionstart` replaces the rectangle with whatever a DOM range spanning cells makes, because
+prosemirror-tables hands back a cell selection only while a mouse drag is still down. What follows
+is either that range collapsed on to the whole content of one cell and replaced, or a text selection
+left spanning cell boundaries and replaced across them, which joins the cells and rows away and
+hands the writer a table whose rows disagree in width. Neither reaches the guard, and the second
+never reaches it by construction, since a change crossing a textblock is dispatched without the
+offer being made. Claiming the event does not help, because a composition cannot be cancelled and
+returning true only stops ProseMirror's own bookkeeping. What is decidable is where the composition
+lands, so the rectangle is collapsed to a caret at the end of its anchor cell before one can start,
+and false is returned so the library's own handler still runs against that caret. Being first
 also means standing aside deliberately, for the one paste the library does better: cells copied out
 of a table and pasted into one, recognised with prosemirror-tables' own predicate rather than a
 reimplementation of it. Emptying cells is a real thing to want and it is Backspace.
@@ -415,6 +458,38 @@ another editor's save fires a burst of filesystem events for what is really one 
 answers three things a plain file tree cannot: quick open by filename and path on `Cmd+P`, full text
 search across every open root on `Cmd+Shift+F`, and the backlinks section appended to a document,
 a reverse lookup of every relative markdown link elsewhere that resolves to the file currently open.
+
+Derived state that only rebuilds at launch has to survive the session, and the worker behind it was
+written as though it could not fail. It ran a bare loop over its queue, so one panic ended indexing
+for as long as the app stayed open: the receiver dropped, every later send was discarded by a `.ok()`
+that never looked, and search, quick open and backlinks went on answering from a frozen snapshot
+with nothing on screen to say so. There was a reachable way to reach it, too, since a document is
+free to contain the control character the search snippets are marked with, and a line holding one
+and nothing else made the snippet slice start after it ended. The panic fired inside the search
+command, which holds the connection across its whole row loop, so it poisoned the mutex and took the
+worker with it. The loop now catches a panic, clears the poison, says so in the index status and
+takes the next job, and it drains its queue before acting on it rather than one message at a time,
+because the watcher's report that the kernel dropped events is a full walk of the root and hundreds
+of those can pile up behind a long build. The drain keeps the last word about each path and never
+reorders, which is the rule the debouncer already applies inside one batch.
+
+The watcher had the same shape of gap about its own root. Detecting that the open folder had gone
+rode on an event arriving for something inside it, because `notify` does not ask FSEvents to watch
+the path to the root and discards anything above it, so renaming or deleting a parent directory was
+never noticed at all and the watch was left holding a stream on a path that no longer existed. A
+watchdog beside each watch stats the root on the debounce tick instead, which is one call and does
+not depend on any event being delivered by any backend.
+
+The link rewrite sweep is the one consumer that deliberately does not share the walk. The tree and
+the index honour `.gitignore` because a sidebar full of build output and a search box full of
+vendored READMEs are both worse than those files being hidden, and the invariant that a file the
+tree hides is a file no search result can open is worth keeping for both. The sweep is not display,
+it writes to the user's files, and a `.gitignore` is a statement about version control rather than
+about whether something is a document: a relative link inside an ignored draft is one the user still
+follows, and leaving it pointing at a path this app is the one that moved is a break nobody finds
+until they follow it. So it gets its own walk with the git sources off and everything else on, the
+four always skipped folders included, and it is bounded by a document count it reports rather than
+by a depth it would have to hide.
 
 ## Order of work
 

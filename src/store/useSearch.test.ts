@@ -19,6 +19,7 @@ vi.mock("../api/roots", () => ({
   rootOpen: vi.fn(),
   rootClose: vi.fn(),
   treeRead: vi.fn(),
+  sweepDocuments: vi.fn(),
   revealInFinder: vi.fn(),
   openExternal: vi.fn(),
 }));

@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicU64, Ordering as Memory};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ignore::WalkBuilder;
+use ignore::{DirEntry, WalkBuilder};
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
@@ -387,6 +387,27 @@ fn assemble(
     Some(node)
 }
 
+/// True for everything a walk should keep, which is everything except one of the four always
+/// skipped names turning up as a folder somewhere below the walk root. Returning false for a
+/// directory prunes it, so nothing inside it is walked either.
+///
+/// The root itself is kept whatever it is called, because a user who opens a folder named `dist`
+/// opened it deliberately and hiding its entire contents from them would be absurd. Files are kept
+/// whatever they are called too: the four names describe folders, and a document called `target.md`
+/// is a document.
+///
+/// Shared by every walk in the app rather than written out once per walk, so the sidebar, the index
+/// and the link sweep cannot drift apart about which folders are never worth descending into.
+fn not_always_skipped(entry: &DirEntry) -> bool {
+    if entry.depth() == 0 {
+        return true;
+    }
+    if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+        return true;
+    }
+    !ALWAYS_SKIPPED.contains(&entry.file_name().to_string_lossy().as_ref())
+}
+
 /// One pass over a folder, returning the root node with everything under it already attached.
 ///
 /// `show_ignored` turns off gitignore, the hidden file rule and the four always skipped folders in
@@ -407,15 +428,7 @@ pub fn scan_tree(root: &Path, show_ignored: bool) -> Result<FileNode, String> {
         .require_git(false)
         .standard_filters(!show_ignored);
     if !show_ignored {
-        builder.filter_entry(|entry| {
-            if entry.depth() == 0 {
-                return true;
-            }
-            if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                return true;
-            }
-            !ALWAYS_SKIPPED.contains(&entry.file_name().to_string_lossy().as_ref())
-        });
+        builder.filter_entry(not_always_skipped);
     }
 
     let mut nodes: HashMap<PathBuf, FileNode> = HashMap::new();
@@ -443,6 +456,73 @@ pub fn scan_tree(root: &Path, show_ignored: bool) -> Result<FileNode, String> {
     }
 
     assemble(root, &mut nodes, &children).ok_or_else(|| format!("cannot read {}", root.display()))
+}
+
+/// Every markdown document under `root`, as flat paths, walked by the link sweep's rules rather
+/// than the sidebar's.
+///
+/// This walk exists because a .gitignore is a statement about version control and not about whether
+/// a file is a document. The tree and the index honour it, and they are right to: a sidebar full of
+/// build output and a search box full of vendored READMEs are both worse than those files staying
+/// out of sight, and neither of them changes anything by leaving a file alone. A link is the
+/// opposite case. A relative link inside an ignored draft is still a link the user follows, and
+/// leaving it pointing at a path that this app is the thing that moved is a break nobody finds
+/// until the day they click it. Hiding that file costs the user a broken document rather than a
+/// tidy sidebar, so the sweep walks by its own rules and the two are allowed to disagree.
+///
+/// So the three git sources come off and the four hardcoded folders stay on, which is what keeps a
+/// checkout's node_modules out of the sweep whether or not git was ever asked about it. Hidden
+/// files stay out for the same reason, since a dotted folder is where other languages keep their
+/// tooling and none of `.venv`, `.next`, `.cache`, `.tox` or `.gradle` holds a link anybody wrote.
+/// A `.ignore` or `.rgignore` is still honoured, because that file is written for tools that walk
+/// rather than for git, which makes it the honest way to tell this walk to stay out of a folder.
+///
+/// `limit` bounds the work, because the sweep reads and rewrites every file this returns and an
+/// unbounded one over a folder the size of somebody's home directory is not what they asked for
+/// when they renamed a file. There is deliberately no depth cap to go with it: a document one level
+/// past a depth cap is silently not swept and nothing anywhere says so, which is the same class of
+/// bug this function exists to fix. A count is honest instead, because the caller can see it was
+/// hit. Which is why one path past the limit comes back rather than exactly `limit` of them: a
+/// folder holding exactly the budget and a folder holding ten thousand more look identical at
+/// `limit` paths, and the caller has to be able to tell them apart to say that its coverage was
+/// partial rather than reporting a complete sweep of a subset.
+pub fn documents_for_sweep(root: &Path, limit: usize) -> Vec<String> {
+    let mut builder = WalkBuilder::new(root);
+    builder
+        // A symlinked folder pointing back at one of its own ancestors would otherwise walk for
+        // ever, exactly as it would for the tree.
+        .follow_links(false)
+        .hidden(true)
+        // No climbing above the walk root looking for ignore files. The sweep is about this one
+        // folder, and what some parent of it happens to say about it is not this folder's business.
+        .parents(false)
+        .ignore(true)
+        .git_ignore(false)
+        .git_global(false)
+        .git_exclude(false);
+    builder.filter_entry(not_always_skipped);
+
+    let mut out = Vec::new();
+    for entry in builder.build() {
+        // One unreadable entry is one document the sweep does not visit and not a failed sweep. The
+        // caller reports what it covered either way, so losing a row here is a smaller and more
+        // honest failure than refusing to rewrite anything at all.
+        let Ok(entry) = entry else { continue };
+        if entry.file_type().map(|t| t.is_dir()).unwrap_or(true) {
+            continue;
+        }
+        // Markdown only. Plain text is indexed and searchable, but nothing in a .txt is a markdown
+        // link this app knows how to rewrite, and opening every one of them to find that out would
+        // be work spent to change nothing.
+        if kind_for(entry.path(), false) != "markdown" {
+            continue;
+        }
+        out.push(path_string(entry.path()));
+        if out.len() > limit {
+            break;
+        }
+    }
+    out
 }
 
 pub fn read_document(path: &Path) -> Result<ReadResult, String> {
@@ -754,6 +834,31 @@ pub fn root_close(app: AppHandle, roots: State<'_, Roots>, root_id: String) -> R
 pub fn tree_read(roots: State<'_, Roots>, root_id: String) -> Result<FileNode, String> {
     let path = roots.path_for(&root_id)?;
     scan_tree(Path::new(&path), false)
+}
+
+/// The flat list of markdown documents the link rewrite sweep has to visit in one root, at most
+/// `limit` of them plus one more if the folder holds more than that.
+///
+/// This is deliberately not `tree_read`, and the difference is the whole point of it. The tree
+/// hides what the folder's gitignore hides, which is the right answer for a sidebar and for search
+/// because both of them only ever read: the worst a hidden row costs is a file the user has to find
+/// another way. The sweep writes. A stale link left inside a file the tree chose not to show is
+/// bytes on disk that look correct and are not, and the user learns about it by clicking the link
+/// long after the rename that broke it. Reusing the tree's walk here would mean the app quietly
+/// breaks the documents it decided were not worth showing, which is worse than either not renaming
+/// or renaming loudly.
+///
+/// The count that comes back is the caller's, not this command's, business: a list longer than
+/// `limit` means the folder overflowed the budget, and the caller is expected to say the sweep was
+/// partial rather than rewrite the first `limit` files and report a finished job.
+#[tauri::command(async)]
+pub fn sweep_documents(
+    roots: State<'_, Roots>,
+    root_id: String,
+    limit: u32,
+) -> Result<Vec<String>, String> {
+    let path = roots.path_for(&root_id)?;
+    Ok(documents_for_sweep(Path::new(&path), limit as usize))
 }
 
 /// Opens Finder with the file selected, rather than opening the file.

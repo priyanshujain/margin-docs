@@ -2,10 +2,14 @@
 // next door holds what is on screen and the setters a keystroke can settle on its own; this module
 // reads the file, hands it to the markdown bridge, and writes it back 500ms after the last edit.
 //
-// Opening writes nothing. There is exactly one call to `fileWrite` in this file, it sits inside
-// `performSave`, and `performSave` returns before reaching it unless the buffer is dirty, which
-// only `setContent` can make it. That is the product's first promise and
-// src/store/useDocument.test.ts asserts it rather than trusting this paragraph.
+// Opening writes nothing. There are exactly two calls to `fileWrite` in this file and they are
+// worth naming. The first is inside `performSave`, which returns before reaching it unless the
+// buffer is dirty, which only `setContent` can make it. That is the product's first promise and
+// src/store/useDocument.test.ts asserts it rather than trusting this paragraph. The second is
+// inside `rewriteOpenDocument` at the bottom, which src/linkRewrite.ts calls when a move has made
+// the open document's own links wrong. It is reached only for a buffer nobody has typed into, and
+// only with bytes the caller worked out from the file's own text rather than from the serializer,
+// so nothing on that path can put a house style rewrite on a document the user has not edited.
 //
 // `setContent` marks the buffer dirty through `differsFromDisk` below, which is the second half of
 // that promise. That question is asked of the document the file was read from and never of the
@@ -14,6 +18,14 @@
 // file on the debounce. A transaction that moved something the markdown has no spelling for gets
 // the same answer for the same reason, since the file would not show it either. Dragging a table
 // column is the whole of that today.
+//
+// One edit is refused rather than written, and the serializer's own comments are where that is
+// argued out: a raw block beside a list is put back to the bytes the file gave it, because the
+// edited bytes are read back as part of the list. That decision is not this module's, but saying
+// so is. The writer marks it on the way past, this module puts it in a toast and holds the buffer
+// dirty until the edit is taken back or the block is moved, and `refusedOnDisk` below is where it
+// is kept. It is the one difference between the buffer and the file that comparing two trees
+// cannot find, since the tree those bytes were written from is the buffer itself.
 //
 // `performSave` also never runs twice at once for the open document: `saveNow` keeps at most one
 // call to it on the wire, folding anything that arrives while one is running into a single next
@@ -31,6 +43,7 @@ import type { ReadResult, WriteResult } from "./ipc";
 import {
   parseMarkdown,
   parsePlainText,
+  type Refused,
   serializeMarkdown,
   serializePlainText,
 } from "./markdown";
@@ -40,6 +53,19 @@ import { notify } from "./store/useToast";
 
 /** Long enough that a sentence is one save, short enough that Cmd+Tab away is already on disk. */
 export const SAVE_DEBOUNCE_MS = 500;
+
+/**
+ * Said when the writer hands back bytes an edit is not in, which is the one edit this editor
+ * knowingly does not save.
+ *
+ * It says which block and it says why, because the alternative the user is left with otherwise is a
+ * change that is on screen, is not in the file, and has nothing anywhere to say so. The wording is
+ * about the file rather than about the writer: what has happened to them is that the block on disk
+ * is the one that was there before, and the reason is that a list is the one construct a blank line
+ * does not close.
+ */
+const REFUSED_MESSAGE =
+  "The edit to that block was not saved: beside a list those bytes read back as part of the list, so the file keeps the block it had.";
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let unsubscribe: (() => void) | null = null;
@@ -64,11 +90,25 @@ let unsubscribe: (() => void) | null = null;
 let diskText: string | null = null;
 let diskDoc: ProseMirrorNode | null = null;
 
-/** The only way either of those moves, so that they cannot drift apart into two answers about the
- * same file, one of which sends a write and the other of which holds it back. */
-function rememberDisk(text: string | null, doc: ProseMirrorNode | null): void {
+/**
+ * Whether the bytes in `diskText` are missing an edit the buffer still holds.
+ *
+ * `diskDoc` cannot answer this and it is not a bug in it. The tree the writer refused part of is
+ * the same tree the bytes were written from, and serializing it again gives the same bytes back, so
+ * the comparison below says the buffer and the file agree at the one moment the thing on screen is
+ * not in the file at all. The writer says so on the way past and this is where that is kept, for
+ * exactly as long as those bytes are the file's.
+ */
+let refusedOnDisk = false;
+
+/** The only way any of those move, so that they cannot drift apart into two answers about the
+ * same file, one of which sends a write and the other of which holds it back. The refusal defaults
+ * to none, because every caller but the serializer's own is saying where the file is rather than
+ * what went into it, and none of those can leave an edit behind. */
+function rememberDisk(text: string | null, doc: ProseMirrorNode | null, refused = false): void {
   diskText = text;
   diskDoc = doc;
+  refusedOnDisk = refused;
 }
 
 /** Markdown and plain text are two different round trips and picking the wrong one mangles a .txt. */
@@ -192,8 +232,22 @@ function sameToTheSerializer(a: ProseMirrorNode, b: ProseMirrorNode): boolean {
  * one. A change wrongly called insignificant is a keystroke that never reaches the disk, which is
  * the worst thing in this module; a change wrongly called significant costs one write that
  * `performSave` then finds nothing to do.
+ *
+ * The comparison is not the whole answer, because there is one difference no comparison of trees
+ * can find: a refused edit is in the buffer and is not in the file, and the tree the bytes were
+ * written from is the buffer, so the two agree. That is what `refusedOnDisk` is holding and it is
+ * why it comes first.
  */
 export function differsFromDisk(next: ProseMirrorNode): boolean {
+  return refusedOnDisk || wouldWrite(next);
+}
+
+/**
+ * The same question with the refusal left out: whether another write would put different bytes on
+ * the disk. A refused edit is a difference the user has to keep seeing and not one a second write
+ * could fix, so it makes the buffer dirty and it does not arm the debounce.
+ */
+function wouldWrite(next: ProseMirrorNode): boolean {
   return diskDoc === null || !sameToTheSerializer(diskDoc, next);
 }
 
@@ -201,6 +255,12 @@ export function differsFromDisk(next: ProseMirrorNode): boolean {
 function bufferDiffersFromDisk(): boolean {
   const now = useDocument.getState().content;
   return now !== null && differsFromDisk(now);
+}
+
+/** And the same again for the debounce, which only ever wants to know about the bytes. */
+function bufferWouldWrite(): boolean {
+  const now = useDocument.getState().content;
+  return now !== null && wouldWrite(now);
 }
 
 function apply(read: ReadResult, document: MarkdownDocument): void {
@@ -229,6 +289,21 @@ function scheduleSave(): void {
 export function cancelPendingSave(): void {
   if (saveTimer !== null) clearTimeout(saveTimer);
   saveTimer = null;
+}
+
+/**
+ * The one edit this editor knowingly does not save, said out loud.
+ *
+ * Once per occurrence rather than once per save. The flag stays up for as long as those bytes are
+ * the file's, so five more laps of the debounce over the same unsavable block say nothing more, and
+ * taking the edit back and making it again is a new occurrence and is worth saying again.
+ *
+ * Read before `rememberDisk`, never after: this is the only place that can tell the refusal that
+ * has just happened from the one that was already standing, and the call that records the new one
+ * is what wipes that difference out.
+ */
+function noteRefusal(refused: boolean): void {
+  if (refused && !refusedOnDisk) notify(REFUSED_MESSAGE);
 }
 
 /**
@@ -325,9 +400,10 @@ async function performSave(): Promise<"wrote" | "conflict" | "skipped"> {
   const { serialize } = bridgeFor(path);
 
   useDocument.setState({ savePhase: "saving", saveError: null });
+  const refused: Refused = { rawBlock: false };
   let text: string;
   try {
-    text = serialize(document, content);
+    text = serialize(document, content, refused);
   } catch (e) {
     useDocument.setState({ savePhase: "error", saveError: String(e) });
     throw e;
@@ -344,7 +420,11 @@ async function performSave(): Promise<"wrote" | "conflict" | "skipped"> {
   if (text === diskText) {
     // Those bytes are on disk and this is a tree that produces them, which is all `diskDoc` has
     // ever claimed to be. Nothing was written, so nothing needs to be.
-    rememberDisk(text, content);
+    //
+    // This is the branch the refused edit arrives on, and it arrives on it precisely because the
+    // writer put the file's own bytes back, so saying nothing here is saying nothing at all.
+    noteRefusal(refused.rawBlock);
+    rememberDisk(text, content, refused.rawBlock);
     useDocument.setState({
       dirty: bufferDiffersFromDisk(),
       savePhase: "idle",
@@ -378,19 +458,23 @@ async function performSave(): Promise<"wrote" | "conflict" | "skipped"> {
     return "conflict";
   }
 
-  rememberDisk(text, content);
-  const stillDirty = bufferDiffersFromDisk();
+  noteRefusal(refused.rawBlock);
+  rememberDisk(text, content, refused.rawBlock);
+  const unwritten = bufferWouldWrite();
   useDocument.setState({
     modifiedMs: result.modifiedMs,
-    dirty: stillDirty,
+    dirty: bufferDiffersFromDisk(),
     savePhase: "idle",
     saveError: null,
     externalChange: "synced",
   });
   // Typed into, or undone, while that write was on the wire. An undo is the case that needs this:
   // it went past the subscription at a moment when the buffer and the file did agree, so nothing
-  // armed the debounce for it, and this write is what has just made it a difference again.
-  if (stillDirty) scheduleSave();
+  // armed the debounce for it, and this write is what has just made it a difference again. A
+  // refusal is not one of these. Those bytes are already everything the file can hold, so the
+  // buffer stays dirty and the debounce stays down, which is the difference between the two
+  // questions asked above: the flag is about what the user can see, the timer is about the bytes.
+  if (unwritten) scheduleSave();
   else cancelPendingSave();
   return "wrote";
 }
@@ -443,6 +527,34 @@ export function abandonDocument(): void {
 }
 
 /**
+ * This app has just renamed or moved the open document's own file, and its buffer holds an edit
+ * nothing else has.
+ *
+ * The buffer follows the file instead of being thrown away and read back from it, because that
+ * edit is the only copy of itself and a reopen is a read. Nothing else here moves. The bytes and
+ * the document this module last saw are still the ones the file held when it was moved, the
+ * timestamp is still that file's, and whatever armed the debounce is still armed. So the save that
+ * follows goes to the new path carrying the old file's timestamp: it lands when nothing touched
+ * the file on the way, and it comes back a conflict when the link rewrite did, which is a question
+ * put to the user rather than either copy being lost.
+ *
+ * What this replaces is worse than it sounds. Left pointed at the path the file has just moved off,
+ * that same save writes a path that no longer exists, and `write_document` falls through its
+ * timestamp check when the file it is checking has gone, because a document deleted under the user
+ * has to have somewhere to land. So the file came back at the old path, and the user was left with
+ * two copies of one document and a sidebar showing both.
+ */
+export function documentMovedTo(path: string): void {
+  if (useDocument.getState().path === null) return;
+  // The history entry goes with it. Where the user is standing in the back and forward list is the
+  // document they are looking at, and this app is the thing that made the old spelling of it dead.
+  useDocument.setState((s) => ({
+    path,
+    history: s.history.map((entry, at) => (at === s.historyIndex ? path : entry)),
+  }));
+}
+
+/**
  * Something outside the app touched the open document. Clean buffers take the new bytes silently,
  * dirty ones are left exactly as they are and the UI is told there is a choice to make.
  */
@@ -458,8 +570,11 @@ export async function documentChangedOnDisk(path: string): Promise<void> {
     // document stays, because it is still the last one this module knew the file to hold and it is
     // what keeps a buffer nobody has typed into from turning dirty and putting the file back.
     // Resurrecting a file the user deleted is `keepBuffer`, and it is the user's word, not a
-    // side effect of clicking into the editor afterwards.
-    rememberDisk(null, diskDoc);
+    // side effect of clicking into the editor afterwards. The refusal is carried over for the same
+    // reason the document is: a save that left an edit behind still left it behind, and forgetting
+    // that here would let the next keystroke work the buffer out as clean over bytes that never
+    // held it.
+    rememberDisk(null, diskDoc, refusedOnDisk);
     useDocument.setState({ externalChange: "changed-on-disk" });
     return;
   }
@@ -484,4 +599,128 @@ export async function documentChangedOnDisk(path: string): Promise<void> {
 
   const { parse } = bridgeFor(path);
   apply(read, parse(read.text, read.path));
+}
+
+/**
+ * What one pass of the link rewrite did to the open document.
+ *
+ * `held` is not a failure and not a no-op. It is this module saying the file was not the sweep's to
+ * write at that moment, which the caller has to report rather than count as a file with nothing in
+ * it to change.
+ */
+export type OpenRewrite =
+  | { kind: "held" }
+  | { kind: "unchanged" }
+  | { kind: "rewritten" }
+  | { kind: "failed"; reason: string };
+
+/**
+ * The open document's own file, rewritten by src/linkRewrite.ts after a move made the links in it
+ * wrong, without going through the serializer and without going around the single writer above.
+ *
+ * `rewrite` is handed the bytes this module last saw and returns the bytes to put back, or null
+ * when there was nothing in them to change. It is pure and it is synchronous, and that is the whole
+ * design rather than a convenience. Every question about the buffer, the answer, and the write go
+ * out in one run of the event loop, so there is no window between reading `dirty` and writing for a
+ * keystroke to arrive in. A callback that could await would put the window straight back.
+ *
+ * The buffer takes the rewrite before the bytes leave rather than after they land. A keystroke
+ * arriving while the write is on the wire then lands on top of the new links, and the save it arms
+ * writes the user's own edit over a file that already agrees with what they are looking at. Doing
+ * it the other way round is what put a conflict banner in front of somebody for a change this app
+ * made itself: the write went out carrying the timestamp the buffer had from before they typed, and
+ * the file they were looking at came back looking like somebody else's copy.
+ *
+ * It costs nothing that the success path was not already paying, because that path swaps the
+ * editor's tree either way.
+ */
+export async function rewriteOpenDocument(
+  path: string,
+  rewrite: (text: string) => string | null,
+): Promise<OpenRewrite> {
+  const state = useDocument.getState();
+  // A buffer with an edit in it is the only copy of that edit, and a write already on the wire owns
+  // the file until it lands. Neither is this function's to write over.
+  if (state.path !== path || state.document === null || state.dirty) return { kind: "held" };
+  if (writeInFlight !== null || diskText === null || state.modifiedMs === null) {
+    return { kind: "held" };
+  }
+
+  const was = { document: state.document, text: diskText, modifiedMs: state.modifiedMs };
+  let prepared: { text: string; document: MarkdownDocument };
+  try {
+    const next = rewrite(was.text);
+    if (next === null) return { kind: "unchanged" };
+    prepared = { text: next, document: bridgeFor(path).parse(next, path) };
+  } catch (e) {
+    return { kind: "failed", reason: String(e) };
+  }
+  const { text, document } = prepared;
+
+  apply({ path, text, modifiedMs: was.modifiedMs }, document);
+
+  const run = async (): Promise<OpenRewrite> => {
+    let result: WriteResult;
+    try {
+      result = await fileWrite(path, text, was.modifiedMs);
+    } catch (e) {
+      revert(path, was);
+      return { kind: "failed", reason: String(e) };
+    }
+    // Switched away from while the write was in flight. The bytes did land, so this is not a
+    // failure, and the buffer it would have been reconciled against is not on screen any more.
+    if (useDocument.getState().path !== path) return { kind: "rewritten" };
+    if (result.conflict) {
+      revert(path, was);
+      return { kind: "failed", reason: "it changed on disk part way through" };
+    }
+    useDocument.setState({ modifiedMs: result.modifiedMs });
+    // Typed into while that write was on the wire, on top of the new links. The same belt and
+    // braces `performSave` ends with, since an undo can pass the subscription while it is clean.
+    if (useDocument.getState().dirty) scheduleSave();
+    return { kind: "rewritten" };
+  };
+
+  const inFlight = run();
+  writeInFlight = inFlight.then(() => undefined);
+  const held = writeInFlight;
+  try {
+    return await inFlight;
+  } finally {
+    if (writeInFlight === held) writeInFlight = null;
+  }
+}
+
+/**
+ * Puts the buffer back to the document the file still holds, for a rewrite that was installed and
+ * then did not land.
+ *
+ * The same object goes back into the store rather than a fresh parse of the same bytes, which is
+ * what lets src/editor/Editor.tsx see the document it already had instead of a different file: it
+ * stashes the caret by path on the way past and puts it back, so the user is left where they were
+ * typing rather than at the top of a document that flickered.
+ */
+function revert(
+  path: string,
+  was: { document: MarkdownDocument; text: string; modifiedMs: number },
+): void {
+  const now = useDocument.getState();
+  if (now.path !== path) return;
+  if (now.dirty) {
+    // Typed into while the write was on the wire, so the buffer holds an edit on top of the new
+    // links and nothing here gets to throw it away. What is on disk is somebody else's copy this
+    // module has not read, which is exactly what `performSave` says in the same situation. No
+    // refusal is carried over: a null document already makes every question about the buffer come
+    // back dirty, which is the whole of what the flag was holding up.
+    rememberDisk(null, null);
+    useDocument.setState({ externalChange: "changed-on-disk" });
+    return;
+  }
+  // Whatever the watcher found while the write was out lives through this. `apply` says "synced"
+  // because every other caller of it has just read the file, and this one has not: it is putting
+  // back the document the file had before, which is the claim this module was already making when
+  // the rewrite started, and it is not an answer to a change somebody else made in the meantime.
+  const flagged = now.externalChange;
+  apply({ path, text: was.text, modifiedMs: was.modifiedMs }, was.document);
+  if (flagged !== "synced") useDocument.setState({ externalChange: flagged });
 }

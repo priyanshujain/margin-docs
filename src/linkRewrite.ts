@@ -33,23 +33,25 @@
 // And every write is proved before it goes out. The spliced text is parsed again and compared
 // against what the splice was meant to do: the same destinations in the same order, each holding
 // the href it was given, each sitting at the offset the replacements before it shift it to. A file
-// that does not answer exactly that is not written at all. The proof sits between the splice and
-// the only call to `fileWrite` in this module, with no condition in front of it, so there is no
-// path to disk that goes around it.
+// that does not answer exactly that is not written at all. The proof sits inside `rewriteLinksIn`,
+// between the splice and the bytes coming back out of it, with no condition in front of it, so
+// neither the write below nor the one src/document.ts makes for the open document has a path to
+// disk that goes around it.
 //
 // Which files get looked at is decided by walking the open roots rather than by asking the index.
 // `backlinksFor` is the cheap route and it is deliberately unused: the index is derived state with
 // no freshness this module can check, and a stale answer is a file quietly left broken, which is
 // the one outcome this project ranks below doing nothing. The sweep reads every markdown document
-// in every open root, skipping the parse for text that cannot name the thing that moved, and it
-// gives up and says so rather than reading more documents than `MAX_SWEEP_DOCUMENTS`. A file
-// outside every open root is never seen by anything here and never will be.
+// in every open root, a gitignored one included, since the tree's filter is about what a sidebar
+// should show and not about whether a link is worth keeping. It skips the parse for text that
+// cannot name the thing that moved, and it gives up and says so rather than reading more documents
+// than `MAX_SWEEP_DOCUMENTS`. A file outside every open root is never seen by anything here and
+// never will be.
 
 import type { Root } from "mdast";
 import { fileRead, fileWrite } from "./api/files";
-import { treeRead } from "./api/roots";
-import { documentChangedOnDisk } from "./document";
-import type { FileNode } from "./ipc";
+import { sweepDocuments } from "./api/roots";
+import { rewriteOpenDocument } from "./document";
 import { relativeFrom, resolveRelative } from "./links";
 import { BOM } from "./markdown/frontmatter";
 import { parseToMdast } from "./markdown/handlers";
@@ -79,7 +81,11 @@ export interface LinkRewriteReport {
   refused: number;
   /** Files that could not be read, could not be written, or that another writer reached first. */
   failed: readonly FailedFile[];
-  /** The open document, when it was left alone because its buffer holds an edit nothing else has. */
+  /**
+   * The open document, when writing it would have gone under what the user is looking at: an
+   * unsaved edit, a save already on the wire, or bytes the editor cannot vouch for because the
+   * file moved on under it.
+   */
   heldBack: string | null;
   /**
    * Whether every document that could hold a link into the move was actually read. `partial` means
@@ -603,30 +609,79 @@ async function rewriteFile(path: string, move: Move, marker: string | null): Pro
   return { kind: "rewritten", path: newPath, refused: outcome.refused };
 }
 
-function documentsUnder(node: FileNode, into: string[]): void {
-  if (node.kind === "dir") {
-    for (const child of node.children) documentsUnder(child, into);
-    return;
+/**
+ * The same work for the file the user is looking at, handed to src/document.ts rather than done
+ * here.
+ *
+ * That module owns the one write the open document is allowed, and it is the only place that can
+ * ask whether the buffer is clean and write in the same run of the event loop. Doing it from out
+ * here meant reading `dirty`, then two parses of the file, then a write, which on a document of any
+ * size is long enough for a keystroke to land in the middle and come back at the user as a conflict
+ * over a change this app made itself.
+ *
+ * `rewriteLinksIn` stays here, because what a file's new bytes are is this module's question and
+ * nothing else's. It is handed over as a callback, and everything it works out other than the bytes
+ * comes back out of the closure.
+ *
+ * Only for the document that did not move. One that did is at a path the store does not have open
+ * yet, and its caller reopens it there the moment this returns.
+ */
+async function rewriteOpenFile(
+  path: string,
+  move: Move,
+  marker: string | null,
+): Promise<FileResult | "held"> {
+  const outcomes: TextOutcome[] = [];
+  const result = await rewriteOpenDocument(path, (text) => {
+    if (marker !== null && !text.includes(marker) && !text.includes("%")) return null;
+    const outcome = rewriteLinksIn(text, path, move);
+    outcomes.push(outcome);
+    return outcome.text;
+  });
+
+  const outcome = outcomes.length === 0 ? null : outcomes[0];
+  // Asked before the write's own answer, and it has to be. A file whose links could not be matched
+  // to its text is one the callback returned null for, and null is also how it says there was
+  // nothing to do, so the outcome is the only thing that can tell those two apart.
+  if (outcome !== null && outcome.unprovable) {
+    return { kind: "failed", path, reason: "its links could not be matched to its text" };
   }
-  // Markdown only. A .txt holding something that looks like a link is not markdown, and parsing one
-  // as markdown to edit it would be this module deciding what a file is against its own extension.
-  if (documentKindForPath(node.path) === "markdown") into.push(node.path);
+  if (result.kind === "held") return "held";
+  if (result.kind === "failed") return { kind: "failed", path, reason: result.reason };
+  const refused = outcome === null ? 0 : outcome.refused;
+  return result.kind === "rewritten"
+    ? { kind: "rewritten", path, refused }
+    : { kind: "unchanged", refused };
 }
 
-/** Every markdown document in every open root, read fresh so the move is already in it. */
-async function sweepCandidates(): Promise<string[] | null> {
+/**
+ * Every markdown document in every open root, read fresh so the move is already in it, and whether
+ * that is all of them.
+ *
+ * `sweep_documents` and not `tree_read`: the tree hides what the folder's gitignore hides, which is
+ * the right answer for a sidebar and the wrong one for a writer. `complete` is false when a root
+ * came back holding more documents than the sweep will read, which the backend says by handing back
+ * one path past the cap.
+ */
+async function sweepCandidates(): Promise<{ paths: string[]; complete: boolean } | null> {
   const roots = useWorkspace.getState().roots;
-  const found: string[] = [];
+  const paths: string[] = [];
+  let complete = true;
   for (const root of roots) {
+    let batch: string[];
     try {
-      documentsUnder(await treeRead(root.id), found);
+      // One past the cap, so a root that goes over costs the cap rather than the folder and is
+      // still visible as having gone over.
+      batch = await sweepDocuments(root.id, MAX_SWEEP_DOCUMENTS + 1);
     } catch {
       // A root that will not answer is a root whose documents were not looked at, and the report
       // has to say so rather than count the ones that did answer as the whole workspace.
       return null;
     }
+    if (batch.length > MAX_SWEEP_DOCUMENTS) complete = false;
+    paths.push(...batch);
   }
-  return found;
+  return { paths, complete };
 }
 
 async function inParallel<T>(items: readonly T[], run: (item: T) => Promise<void>): Promise<void> {
@@ -650,7 +705,10 @@ function describe(report: LinkRewriteReport): string | null {
     trouble.push(`${count(report.failed.length, "file")} could not be updated`);
   }
   if (report.heldBack !== null) {
-    trouble.push(`${baseName(report.heldBack)} has unsaved changes and was left alone`);
+    // Not "has unsaved changes" any more. That is the usual reason and it is no longer the only
+    // one: a save still on the wire and a file the editor has lost track of hold it back too, and
+    // naming a cause the user can check and find is not true is worse than naming none.
+    trouble.push(`${baseName(report.heldBack)} is open and was left as it is`);
   }
   if (report.refused > 0) {
     trouble.push(`${count(report.refused, "link")} could not be matched exactly`);
@@ -687,8 +745,12 @@ function describe(report: LinkRewriteReport): string | null {
  * a failure part way through leaves the files before it correctly rewritten, the file that failed
  * with every byte it had, and the ones after it untouched; that is what `failed` is for, and there
  * is no rollback because a rollback is another round of writes that can fail in the same way. And
- * the open document is skipped outright when its buffer is dirty, because the buffer is the only
- * copy of that edit and writing under it would put the two on a collision the user has to resolve.
+ * the open document is skipped when its buffer is dirty, and equally when a save of it is already
+ * on the wire, because in both cases the bytes in front of the user are the ones that count and
+ * writing under them would put the two on a collision the user has to resolve. When it is written
+ * it goes through src/document.ts rather than around it, and the buffer is handed the new links
+ * before the bytes leave, so the file and the document on screen cannot come out of this as two
+ * copies of the same move.
  */
 export async function rewriteLinksForMove(move: Move): Promise<LinkRewriteReport> {
   const rewritten: string[] = [];
@@ -704,14 +766,18 @@ export async function rewriteLinksForMove(move: Move): Promise<LinkRewriteReport
   }
 
   const candidates = await sweepCandidates();
-  const documents = candidates ?? [];
+  const documents = candidates?.paths ?? [];
   const inside = new Set(documents.filter((path) => path === move.to || isUnder(path, move.to)));
-  // A document dragged into a folder the tree does not list, an ignored one, is not in the sweep at
-  // all, and its own links are the half of this that needs no sweep to be answered.
+  // An ignored document is in the sweep now, so what is left for this line is the case that still
+  // is not: a document moved to somewhere outside every open root is in no list this module can
+  // ask for, and its own links are the half of this that needs no sweep to be answered.
   if (documentKindForPath(move.to) === "markdown") inside.add(move.to);
   let outside = documents.filter((path) => !inside.has(path));
 
-  if (candidates === null || outside.length > MAX_SWEEP_DOCUMENTS) {
+  // `complete` is not something `outside.length` can stand in for. A list cut off at the cap whose
+  // every entry landed inside the move leaves nothing outside at all, which reads exactly like a
+  // workspace that had nothing to update while documents were quietly dropped.
+  if (candidates === null || !candidates.complete || outside.length > MAX_SWEEP_DOCUMENTS) {
     coverage = "partial";
     outside = [];
   }
@@ -743,17 +809,20 @@ export async function rewriteLinksForMove(move: Move): Promise<LinkRewriteReport
   );
 
   if (open !== undefined) {
-    if (useDocument.getState().dirty) {
+    // A document that stayed where it is goes through src/document.ts, which gives the buffer the
+    // new links before the bytes leave and so needs nothing here to tell the editor afterwards. One
+    // that moved cannot: the store is still holding it under the path it came from, and the caller
+    // reopens it at the new one, which reads the file again anyway. That one keeps the old shape,
+    // dirty check and all, because writing under a buffer nobody has landed is the collision this
+    // whole module exists to avoid.
+    if (mapped(open.path, move) === openPath) {
+      const result = await rewriteOpenFile(open.path, move, open.marker);
+      if (result === "held") heldBack = open.path;
+      else take(result);
+    } else if (useDocument.getState().dirty) {
       heldBack = open.path;
     } else {
-      const result = await rewriteFile(open.path, move, open.marker);
-      take(result);
-      // Only for a document that did not move. The watcher drops this app's own writes, so nothing
-      // else is going to tell the editor its file changed underneath it. A document that did move
-      // is about to be reopened at its new path by the caller, which reads the file again anyway.
-      if (result.kind === "rewritten" && mapped(open.path, move) === openPath) {
-        await documentChangedOnDisk(openPath).catch(() => {});
-      }
+      take(await rewriteFile(open.path, move, open.marker));
     }
   }
 
