@@ -12,8 +12,9 @@
 // correctly.
 
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { relaunch } from "@tauri-apps/plugin-process";
-import { check } from "@tauri-apps/plugin-updater";
+import { runWritingTool } from "../editor/writing";
+import { exportPdf } from "../export/run";
+import { checkForUpdates } from "../update";
 import { useDocument } from "../store/useDocument";
 import { useProofing } from "../store/useProofing";
 import { useTheme } from "../store/useTheme";
@@ -28,6 +29,7 @@ export type CommandId =
   | "new-folder"
   | "close-folder"
   | "save"
+  | "export-pdf"
   | "rename-file"
   | "duplicate-file"
   | "delete-file"
@@ -44,7 +46,10 @@ export type CommandId =
   | "editor-width-normal"
   | "editor-width-wide"
   | "toggle-spelling"
+  | "toggle-grammar"
   | "correct-spelling"
+  | "writing-proofread"
+  | "writing-rewrite"
   | "shortcuts"
   | "settings"
   | "check-updates"
@@ -217,27 +222,6 @@ async function goForward(): Promise<void> {
   }
 }
 
-let checkingForUpdates = false;
-
-async function checkForUpdates(): Promise<void> {
-  if (checkingForUpdates) return;
-  checkingForUpdates = true;
-  try {
-    const update = await check();
-    if (!update) {
-      notify("Margin Docs is up to date");
-      return;
-    }
-    notify(`Installing ${update.version}…`);
-    await update.downloadAndInstall();
-    await relaunch();
-  } catch (e) {
-    notify(`Could not check for updates: ${String(e)}`);
-  } finally {
-    checkingForUpdates = false;
-  }
-}
-
 const listeners = new Map<CommandId, Set<() => void>>();
 
 /**
@@ -264,6 +248,7 @@ const TABLE: Record<CommandId, Omit<Command, "id">> = {
   "new-folder": { label: "New Folder", palette: true, run: () => void createFolder() },
   "close-folder": { label: "Close Folder", palette: false, run: closeActiveFolder },
   save: { label: "Save", palette: true, run: () => void saveDocument() },
+  "export-pdf": { label: "Export as PDF…", palette: true, run: () => void exportPdf() },
   "rename-file": { label: "Rename", palette: false, run: () => void renameSelected() },
   "duplicate-file": { label: "Duplicate", palette: false, run: () => void duplicateSelected() },
   "delete-file": { label: "Delete", palette: false, run: () => void deleteSelected() },
@@ -320,6 +305,15 @@ const TABLE: Record<CommandId, Omit<Command, "id">> = {
     run: () => useProofing.getState().toggle(),
   },
 
+  // Its twin, and turned over the same way. The two are separate settings because the checkers
+  // are: spelling is the system's and grammar is Harper's, and a user who wants one without the
+  // other is not asking for anything strange.
+  "toggle-grammar": {
+    label: "Check Grammar While Typing",
+    palette: true,
+    run: () => useProofing.getState().toggleGrammar(),
+  },
+
   // Dispatched, unlike the one above it, because its whole result is the correction menu on screen
   // and the component that draws that menu is the only thing here that knows where the caret is.
   //
@@ -330,6 +324,22 @@ const TABLE: Record<CommandId, Omit<Command, "id">> = {
     label: "Correct Spelling",
     palette: false,
     run: () => dispatch("correct-spelling"),
+  },
+
+  // Writing Tools is the system's, but these two commands are not, and that is the point: the
+  // chords and the menu rows are this app's own, so every way in passes the selection guard in
+  // src/editor/writing.ts before the system is asked to rewrite anything. On a Mac without Apple
+  // Intelligence there is no submenu to perform, and the honest answer is a sentence rather than a
+  // gesture that quietly does nothing.
+  "writing-proofread": {
+    label: "Proofread with Writing Tools",
+    palette: true,
+    run: () => void runWritingTool("proofread"),
+  },
+  "writing-rewrite": {
+    label: "Rewrite with Writing Tools",
+    palette: true,
+    run: () => void runWritingTool("rewrite"),
   },
 
   shortcuts: { label: "Keyboard Shortcuts", palette: true, run: () => dispatch("shortcuts") },

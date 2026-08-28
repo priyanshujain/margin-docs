@@ -670,6 +670,22 @@ pub fn duplicate_entry(path: &Path) -> Result<FileNode, String> {
 /// Never `fs::remove_file`. These are the user's own documents and this app does not get to be the
 /// reason one of them is gone for good.
 pub fn trash_entry(path: &Path) -> Result<(), String> {
+    // Not `trash::delete`, whose macOS default asks Finder to do it over an Apple event. That is
+    // the method that leaves Put Back on the file, and it is the wrong trade here: an Apple event
+    // from a hardened runtime needs an entitlement and a one time permission prompt, and a delete
+    // that fails because the user said no to a dialog about controlling Finder is a worse answer
+    // than a delete with no Put Back. `trashItemAtURL:` asks nobody, makes no sound and is faster.
+    // A file trashed this way is still in the Trash and can still be dragged back out.
+    #[cfg(target_os = "macos")]
+    {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        let mut context = trash::TrashContext::default();
+        context.set_delete_method(DeleteMethod::NsFileManager);
+        context
+            .delete(path)
+            .map_err(|e| format!("{}: {e}", path.display()))
+    }
+    #[cfg(not(target_os = "macos"))]
     trash::delete(path).map_err(|e| format!("{}: {e}", path.display()))
 }
 

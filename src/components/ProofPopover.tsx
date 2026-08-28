@@ -1,5 +1,14 @@
-// The menu over a misspelled word: what the system thinks was meant, and the two ways of saying it
-// was not a mistake.
+// The menu over an underlined word or phrase: what the checker thinks was meant, and the ways of
+// saying it was not a mistake.
+//
+// One menu for both checkers, because from the reader's side there is one underline under one piece
+// of their writing and it is either wrong or it is not. What changes with the kind is the top of the
+// menu and the bottom of it. Grammar gets a heading: Harper's category for the rule and the sentence
+// it wrote, because a grammar correction is a judgement in a way a spelling one is not, and taking
+// "their own" over "there own" without being told why is how a checker teaches somebody nothing.
+// Spelling keeps "Learn Spelling", and grammar does not get it: the dictionary that item writes to
+// is the Mac's own and it holds words, so offering it for a phrase would be offering something that
+// cannot happen.
 //
 // Mounted once and drawing nothing until src/editor/proofing.ts puts a word in the store, so App.tsx
 // holds one line for it rather than a piece of the feature. It renders into a portal because the
@@ -43,6 +52,23 @@ const MARGIN = 8;
 
 /** Everything the arrow keys walk, which is every item and not only the suggestions. */
 const ITEM = ".proof-suggestion, .proof-action";
+
+/**
+ * Harper's rule categories arrive as the names of its own enum: "WordChoice" is a serviceable key
+ * and a poor heading, so the words are split apart for the one place a person reads it.
+ */
+function readableKind(kind: string): string {
+  return kind.replace(/([a-z0-9])([A-Z])/g, "$1 $2");
+}
+
+/**
+ * A suggestion that deletes the text rather than replacing it arrives as an empty string, which is
+ * the correct thing to write and not something to put on a button. Harper offers it for a repeated
+ * word and for a redundancy, where what is being suggested really is "take this out".
+ */
+function suggestionLabel(suggestion: string): string {
+  return suggestion === "" ? "Remove" : suggestion;
+}
 
 /**
  * The chord's end of the feature, and the one line of explanation it owes when there is nothing
@@ -148,6 +174,17 @@ function ProofMenu({ target }: { target: ProofTarget }) {
     e.stopPropagation();
   };
 
+  const grammar = target.grammar;
+  // Everything in the menu that is prose rather than a choice, in the order it is drawn, so a
+  // reader is told what the checker said and then what the menu can do about it.
+  const described = [
+    grammar ? `${ids}-message` : null,
+    target.suggestions.length === 0 ? `${ids}-none` : null,
+    grammar ? null : `${ids}-note`,
+  ]
+    .filter((id) => id !== null)
+    .join(" ");
+
   /**
    * The walk, and the trap.
    *
@@ -172,18 +209,28 @@ function ProofMenu({ target }: { target: ProofTarget }) {
       ref={popRef}
       className="proof-pop"
       role="menu"
-      aria-label={`Spelling suggestions for ${target.word}`}
-      aria-describedby={
-        target.suggestions.length === 0 ? `${ids}-none ${ids}-note` : `${ids}-note`
-      }
+      aria-label={`${grammar ? "Grammar" : "Spelling"} suggestions for ${target.word}`}
+      aria-describedby={described}
       style={{ left: at.left, top: at.top }}
       onKeyDown={onKeyDown}
       onContextMenu={(e) => e.preventDefault()}
     >
-      {/* The two paragraphs and the rule are not items, so a menu announces the things that can be
-          chosen and nothing else. Neither line is thrown away with them: both are named on the
-          menu's own aria-describedby above, which is where a sentence about a menu belongs and is
+      {/* None of the paragraphs and none of the rules are items, so a menu announces the things that
+          can be chosen and nothing else. None of the lines is thrown away with them: each is named on
+          the menu's own aria-describedby above, which is where a sentence about a menu belongs and is
           what gets them read once, on the way in, rather than as a row somebody has to arrow past. */}
+      {grammar && (
+        <>
+          <p className="proof-kind" role="presentation">
+            {readableKind(grammar.kind)}
+          </p>
+          <p className="proof-message" role="presentation" id={`${ids}-message`}>
+            {grammar.message}
+          </p>
+          <div className="proof-sep" role="separator" />
+        </>
+      )}
+
       {target.suggestions.length === 0 ? (
         <p className="proof-none" role="presentation" id={`${ids}-none`}>
           No suggestions
@@ -200,29 +247,31 @@ function ProofMenu({ target }: { target: ProofTarget }) {
               dismiss();
             }}
           >
-            {suggestion}
+            {suggestionLabel(suggestion)}
           </button>
         ))
       )}
 
       <div className="proof-sep" role="separator" />
 
+      {!grammar && (
+        <button
+          role="menuitem"
+          className="proof-action"
+          title={`Adds “${target.word}” to the dictionary every app on this Mac shares.`}
+          onMouseDown={keepFocus}
+          onClick={() => {
+            void learnWord(target.word);
+            dismiss();
+          }}
+        >
+          Learn Spelling
+        </button>
+      )}
       <button
         role="menuitem"
         className="proof-action"
-        title={`Adds “${target.word}” to the dictionary every app on this Mac shares.`}
-        onMouseDown={keepFocus}
-        onClick={() => {
-          void learnWord(target.word);
-          dismiss();
-        }}
-      >
-        Learn Spelling
-      </button>
-      <button
-        role="menuitem"
-        className="proof-action"
-        title="Stops underlining this word until the app is next opened."
+        title={`Stops underlining this ${grammar ? "phrase" : "word"} until the app is next opened.`}
         onMouseDown={keepFocus}
         onClick={() => {
           ignoreWord(target.word);
@@ -232,9 +281,11 @@ function ProofMenu({ target }: { target: ProofTarget }) {
         Ignore
       </button>
 
-      <p className="proof-note" role="presentation" id={`${ids}-note`}>
-        Learning a word teaches this Mac, not only Margin Docs.
-      </p>
+      {!grammar && (
+        <p className="proof-note" role="presentation" id={`${ids}-note`}>
+          Learning a word teaches this Mac, not only Margin Docs.
+        </p>
+      )}
     </div>,
     document.body,
   );

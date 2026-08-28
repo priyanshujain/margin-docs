@@ -1,0 +1,211 @@
+/* The settings panel and the update dialog.
+ *
+ * Both borrow .overlay, .panel, .panel-head, .panel-body and .panel-foot from app.css, and the
+ * three buttons from tree.css, for the same reason the width menu borrows the menu: a dialog that
+ * looked like its own app would be the only thing on screen that did. What is here is the two
+ * layouts those shells hold, the switch, and the progress bar.
+ *
+ * The switch is the one control this app has that nothing else needed, so it is drawn here rather
+ * than in app.css. It is a button with role="switch" and its state is data-on, which is what the
+ * whole app does with a control that is either on or off. */
+
+.panel-settings {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.panel-settings .panel-body {
+  gap: 24px;
+}
+
+.setting-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* The label is spaced for a sidebar over in app.css, and the panel has its own padding already. */
+.panel-settings .nav-label {
+  padding: 0 0 6px;
+}
+
+.setting-app {
+  font-family: var(--font-book);
+  font-size: var(--t-5);
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.setting-build {
+  font-family: var(--font-ui);
+  font-size: var(--t-3);
+  color: var(--ink-faint);
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  min-height: 34px;
+  padding: 5px 0;
+}
+
+.setting-row + .setting-row {
+  border-top: 1px solid var(--line);
+}
+
+.setting-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.setting-label {
+  font-family: var(--font-ui);
+  font-size: var(--t-4);
+  color: var(--ink);
+}
+
+.setting-note {
+  font-family: var(--font-ui);
+  font-size: var(--t-2);
+  color: var(--ink-faint);
+}
+
+.setting-row[data-disabled="true"] .setting-label {
+  color: var(--ink-faint);
+}
+
+/* A button that carries an action rather than an answer: Check Now sits where a switch sits, so it
+   is sized to match one rather than to match the buttons along the foot of a dialog. */
+.btn-quiet {
+  flex: none;
+  padding: 6px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--raised);
+  font-family: var(--font-ui);
+  font-size: var(--t-3);
+  font-weight: 500;
+  color: var(--ink-soft);
+  transition: background 120ms var(--ease), color 120ms var(--ease),
+    border-color 120ms var(--ease);
+}
+
+.btn-quiet:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.btn-quiet:disabled {
+  color: var(--ink-faint);
+  cursor: default;
+}
+
+.switch {
+  flex: none;
+  position: relative;
+  width: 38px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  background: var(--shell);
+  transition: background 140ms var(--ease), border-color 140ms var(--ease);
+}
+
+.switch[data-on="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.switch:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--paper);
+  box-shadow: var(--shadow-raised);
+  transition: transform 140ms var(--ease), background 140ms var(--ease);
+}
+
+.switch[data-on="true"] .switch-knob {
+  transform: translateX(16px);
+  background: var(--accent-contrast);
+}
+
+/* The update dialog */
+
+.panel-update {
+  width: min(460px, calc(100vw - 32px));
+}
+
+/* The release notes as the release wrote them, which is text and not markup. Preserved rather than
+   parsed: this is the one string in the app that arrives from outside it, and running it through a
+   renderer would be the only place where somebody else's bytes decide what is drawn. */
+.update-notes {
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--raised);
+  font-family: var(--font-ui);
+  font-size: var(--t-3);
+  line-height: 1.55;
+  color: var(--ink-soft);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.update-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.update-track {
+  position: relative;
+  height: 5px;
+  border-radius: var(--r-pill);
+  background: var(--accent-wash);
+  overflow: hidden;
+}
+
+.update-bar {
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  transition: width 180ms var(--ease);
+}
+
+/* A server that sends no content length leaves nothing to measure, so the bar says "still going"
+   rather than claiming a fraction it does not know. */
+.update-track[data-unknown="true"] .update-bar {
+  width: 34%;
+  animation: update-sweep 1400ms var(--ease) infinite;
+}
+
+@keyframes update-sweep {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+.update-count {
+  font-family: var(--font-ui);
+  font-size: var(--t-2);
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}

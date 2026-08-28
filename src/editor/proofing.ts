@@ -1,4 +1,4 @@
-// Spelling, drawn over the document as decorations and never as an edit to it.
+// Spelling and grammar, drawn over the document as decorations and never as an edit to it.
 //
 // The whole of this file is paint and a menu. The only transaction in it that carries a step is the
 // one a user makes by choosing a suggestion, and that one is a single transaction so a single undo
@@ -8,14 +8,29 @@
 // rewrites text on its own would be a file damaging bug in this project's terms, so it does not have
 // the ability to.
 //
+// TWO CHECKERS, ONE PIPELINE.
+//
+// Spelling is the system's and grammar is Harper's. They are separate settings, separate commands
+// and separate answers, and they share everything between the document and the underline: the same
+// blocks, the same batching, the same debounce, the same decoration set and the same popover. There
+// is deliberately no second producer of strings and no second pass. The guard below is `proseBlocks`
+// and it is one function; a guard that only one of the two checkers happened to go through is a
+// guard that stops being there the day somebody adds a third call beside them.
+//
+// The caches are the one thing that is per checker, because the answers are. A block can have been
+// asked about by one and not the other, which is exactly what the first launch after somebody turns
+// grammar on looks like, and a single cache would either re-ask the whole document on every toggle
+// or claim a block was checked for something it was never sent to.
+//
 // WHAT IS CHECKED, and where that guard actually sits.
 //
 // Prose only. A fenced code block, a raw block, a maths field and an inline code span are not prose,
 // and underlining somebody's variable names is the fastest way to get a spell checker turned off for
 // good. The guard is `proseBlocks` below, and it is the single producer of every string this file
-// sends: `pass` checks only what `proseBlocks` returned, `spellCheck` is called from nowhere else in
-// the app outside src/api/spell.ts itself, and a block that never went to the checker has no entry
-// in the cache and therefore no decoration. There is no second path to the checker to forget to
+// sends to either checker: `pass` checks only what `proseBlocks` returned, `spellCheck` and
+// `grammarCheck` are called from nowhere else in the app outside src/api/spell.ts and
+// src/api/grammar.ts themselves, and a block that never went to a checker has no entry in that
+// checker's cache and therefore no decoration. There is no second path to either one to forget to
 // guard, which is the shape of guard this project has now shipped four times unreached.
 //
 // A URL is the exception and it is deliberately not handled here. The Rust side asks AppKit to
@@ -24,12 +39,13 @@
 //
 // WHEN IT RUNS.
 //
-// Not on every keystroke. Each check crosses the IPC boundary into AppKit, so typing schedules a
-// pass a few hundred milliseconds out and every further keystroke pushes it back. A pass sends only
-// the blocks whose text the checker has not already answered about, so an ordinary edit is one
-// paragraph over the wire and a document nobody has touched is nothing at all. The cache is keyed by
-// the exact text of a block, which is what makes that true without any range tracking: text the user
-// has not touched is text that is still its own key.
+// Not on every keystroke. Each check crosses the IPC boundary, into AppKit for spelling and into
+// Harper's linter for grammar, so typing schedules a pass a few hundred milliseconds out and every
+// further keystroke pushes it back. A pass sends only the blocks whose text a checker has not
+// already answered about, so an ordinary edit is one paragraph over the wire and a document nobody
+// has touched is nothing at all. A cache is keyed by the exact text of a block, which is what makes
+// that true without any range tracking: text the user has not touched is text that is still its own
+// key.
 //
 // AND WHY A STALE ANSWER CANNOT LAND.
 //
@@ -46,8 +62,9 @@ import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import type { EditorState, PluginView } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import type { EditorView } from "@tiptap/pm/view";
+import { grammarCheck } from "../api/grammar";
 import { spellCheck } from "../api/spell";
-import type { SpellIssue } from "../ipc";
+import type { GrammarIssue, SpellIssue } from "../ipc";
 import { useProofing, type ProofTarget } from "../store/useProofing";
 
 /** How long after the last keystroke a pass runs. Long enough that typing a word is one check. */
@@ -79,6 +96,18 @@ interface Block {
   text: string;
 }
 
+/**
+ * The half of an answer this file's plumbing cares about, which is the same half for both checkers.
+ *
+ * Everything from the run batching to the cache to the offset arithmetic is about where a problem is
+ * and nothing about what it is, so it is written once against this and used twice, rather than
+ * copied and left to drift apart a fix at a time.
+ */
+interface Ranged {
+  start: number;
+  end: number;
+}
+
 /** Several blocks' text in one string, and where each of them starts in it. */
 interface Run {
   text: string;
@@ -86,14 +115,15 @@ interface Run {
 }
 
 /**
- * What the checker has already said, keyed by the exact text it was said about.
+ * What each checker has already said, keyed by the exact text it was said about.
  *
  * Module level rather than per view because it is not about a document: two files that share a
- * paragraph share its answer, and switching away from a document and back does not re-ask anything.
- * It is pruned at the end of every pass down to the text that is actually in the document, so it
- * cannot grow past the size of what is open.
+ * paragraph share its answers, and switching away from a document and back does not re-ask anything.
+ * Both are pruned at the end of every pass down to the text that is actually in the document, so
+ * neither can grow past the size of what is open.
  */
-let cache = new Map<string, SpellIssue[]>();
+const spellCache = new Map<string, SpellIssue[]>();
+const grammarCache = new Map<string, GrammarIssue[]>();
 
 /**
  * The view a menu acts on. There is one editor and one document (see src/editor/index.ts), so there
@@ -156,8 +186,8 @@ function proseBlocks(doc: ProseMirrorNode): Block[] {
   return blocks;
 }
 
-/** The distinct texts in the document the checker has not answered about yet. */
-function pending(blocks: readonly Block[]): string[] {
+/** The distinct texts in the document one checker has not answered about yet. */
+function pending<T>(cache: ReadonlyMap<string, T[]>, blocks: readonly Block[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const block of blocks) {
@@ -193,13 +223,18 @@ function runsOf(texts: readonly string[]): Run[] {
  * next pass would send again, so a paragraph the checker is happy with has to be recorded as
  * checked or the document with no misspellings in it is the one that never stops asking.
  */
-function store(run: Run, issues: readonly SpellIssue[]): void {
-  const byPart = run.parts.map(() => [] as SpellIssue[]);
+function store<T extends Ranged>(
+  cache: Map<string, T[]>,
+  run: Run,
+  issues: readonly T[],
+): void {
+  const byPart = run.parts.map(() => [] as T[]);
   for (const issue of issues) {
     const index = run.parts.findIndex(
       (part) => issue.start >= part.at && issue.end <= part.at + part.text.length,
     );
-    // An issue that reaches across the join between two blocks is not a word in either of them.
+    // An issue that reaches across the join between two blocks is not about either of them: a
+    // misspelling is not a word there, and a sentence is not one sentence there.
     if (index === -1) continue;
     const part = run.parts[index];
     byPart[index].push({ ...issue, start: issue.start - part.at, end: issue.end - part.at });
@@ -207,47 +242,88 @@ function store(run: Run, issues: readonly SpellIssue[]): void {
   run.parts.forEach((part, index) => cache.set(part.text, byPart[index]));
 }
 
-/** Down to what is in the document, so the cache is never larger than what is open. */
-function prune(blocks: readonly Block[]): void {
-  const kept = new Map<string, SpellIssue[]>();
-  for (const block of blocks) {
-    const issues = cache.get(block.text);
-    if (issues) kept.set(block.text, issues);
+/**
+ * Down to what is in the document, so a cache is never larger than what is open.
+ *
+ * In place rather than by building a smaller map, so that the two maps below are the same two
+ * objects for the life of the module. A pass hands one of them to `store` and then waits on the IPC
+ * boundary, and a second pass can finish and prune in the meantime; if pruning swapped the map, the
+ * first pass would come back and file its answers into one nothing reads any more.
+ */
+function prune<T>(cache: Map<string, T[]>, blocks: readonly Block[]): void {
+  const alive = new Set(blocks.map((block) => block.text));
+  for (const text of cache.keys()) {
+    if (!alive.has(text)) cache.delete(text);
   }
-  cache = kept;
+}
+
+/** Which underlines are wanted, and what has been waved away for this sitting. */
+interface Drawing {
+  spelling: boolean;
+  grammar: boolean;
+  ignored: ReadonlySet<string>;
 }
 
 /**
- * The decorations for the document as it stands, built from what the checker has already said.
+ * Whether an issue's offsets sit inside the block it claims to be about.
+ *
+ * A checker is a foreign process walking the user's text, and a decoration running past the end of
+ * a node throws inside the view rather than merely looking wrong, so an answer that does not fit is
+ * dropped rather than clamped: an underline in the wrong place is a claim about the wrong words.
+ */
+function inside(issue: Ranged, block: Block): boolean {
+  return issue.start >= 0 && issue.end > issue.start && issue.end <= block.text.length;
+}
+
+/**
+ * The decorations for the document as it stands, built from what the checkers have already said.
  *
  * A block with nothing cached contributes nothing, which is what an underline that has not arrived
- * yet looks like, and an issue whose offsets do not sit inside the block they claim to be about is
- * dropped: the checker is a foreign process walking the user's text, and a decoration running past
- * the end of a node throws inside the view rather than merely looking wrong.
+ * yet looks like. The two kinds are built in the same set and can overlap: a misspelled word inside
+ * a phrase Harper does not like gets both marks, and `menuAt` below decides which of them a click
+ * is about.
  */
-function decorationsFor(
-  doc: ProseMirrorNode,
-  blocks: readonly Block[],
-  ignored: ReadonlySet<string>,
-): DecorationSet {
+function decorationsFor(doc: ProseMirrorNode, blocks: readonly Block[], what: Drawing): DecorationSet {
   const decorations: Decoration[] = [];
   for (const block of blocks) {
-    const issues = cache.get(block.text);
-    if (!issues) continue;
-    for (const issue of issues) {
-      if (issue.start < 0 || issue.end <= issue.start || issue.end > block.text.length) continue;
-      if (ignored.has(issue.word.toLowerCase())) continue;
-      decorations.push(
-        Decoration.inline(
-          block.base + issue.start,
-          block.base + issue.end,
-          { class: "proof-mark" },
-          // The word and its suggestions ride on the decoration rather than in a list beside it, so
-          // that mapping the set through an edit keeps the menu's offer attached to the word it was
-          // about instead of to a position that has moved.
-          { word: issue.word, suggestions: issue.suggestions },
-        ),
-      );
+    if (what.spelling) {
+      for (const issue of spellCache.get(block.text) ?? []) {
+        if (!inside(issue, block) || what.ignored.has(issue.word.toLowerCase())) continue;
+        decorations.push(
+          Decoration.inline(
+            block.base + issue.start,
+            block.base + issue.end,
+            { class: "proof-mark" },
+            // The word and its suggestions ride on the decoration rather than in a list beside it,
+            // so that mapping the set through an edit keeps the menu's offer attached to the word it
+            // was about instead of to a position that has moved.
+            { word: issue.word, suggestions: issue.suggestions, grammar: null },
+          ),
+        );
+      }
+    }
+    if (what.grammar) {
+      for (const issue of grammarCache.get(block.text) ?? []) {
+        if (!inside(issue, block)) continue;
+        // Harper answers about a span rather than about a word, so what the popover is "about" is
+        // whatever that span covers. It is taken from the block's own text for the same reason the
+        // spelling half takes the word the checker sent back: it is what a suggestion will be
+        // checked against before anything is written.
+        const text = block.text.slice(issue.start, issue.end);
+        if (what.ignored.has(text.toLowerCase())) continue;
+        decorations.push(
+          Decoration.inline(
+            block.base + issue.start,
+            block.base + issue.end,
+            { class: "proof-mark-grammar" },
+            {
+              word: text,
+              suggestions: issue.suggestions,
+              grammar: { kind: issue.kind, message: issue.message },
+            },
+          ),
+        );
+      }
     }
   }
   return DecorationSet.create(doc, decorations);
@@ -263,41 +339,79 @@ function clear(view: EditorView): void {
   draw(view, DecorationSet.empty);
 }
 
+/** What is turned on right now, and available to be turned on at all. */
+function wanted(): Drawing {
+  const state = useProofing.getState();
+  return {
+    spelling: state.enabled && state.availability === "ready",
+    grammar: state.grammar && state.grammarAvailability === "ready",
+    ignored: state.ignored,
+  };
+}
+
 /**
- * One check of whatever the checker has not seen, and then a redraw.
+ * One check of whatever the checkers have not seen, and then a redraw.
  *
  * The decorations are built from `view.state.doc` after the awaits rather than from the document the
  * pass started on. By then the sequence number has already answered whether anything moved, so the
  * two agree; building from what is on screen is what makes that a fact about the code rather than a
  * fact about the timing.
+ *
+ * Spelling first and grammar after, rather than both at once. The two calls are cheap and the user
+ * is typing while they run, so the useful thing is that the commoner of the two answers first and
+ * its underlines land while the other is still being asked, not that the pair finishes a few
+ * milliseconds sooner.
  */
 async function pass(view: EditorView): Promise<void> {
   const seq = passSeq;
-  const state = useProofing.getState();
-  if (!state.enabled || state.availability !== "ready") {
+  const what = wanted();
+  if (!what.spelling && !what.grammar) {
     clear(view);
     return;
   }
 
-  for (const run of runsOf(pending(proseBlocks(view.state.doc)))) {
-    try {
-      store(run, await spellCheck(run.text));
-    } catch {
-      // The checker went away mid document, which on a build without one is what the first call
-      // does. Nothing is drawn and nothing is said: what is already underlined stays, and the next
-      // edit asks again.
-      return;
+  const blocks = proseBlocks(view.state.doc);
+  // A checker that is not there, which on a build without one is what the first call finds out,
+  // ends its own half of the pass and says nothing. There is no toast: "this build cannot check
+  // grammar" is what the availability question the store asks once per launch is for, and not
+  // something worth repeating on every keystroke. The other checker's loop is untouched, which is
+  // why each has its own catch rather than the pair sharing one, and the redraw below still happens
+  // from whatever the two of them had already answered.
+  if (what.spelling) {
+    for (const run of runsOf(pending(spellCache, blocks))) {
+      try {
+        store(spellCache, run, await spellCheck(run.text));
+      } catch {
+        break;
+      }
+    }
+  }
+  if (what.grammar) {
+    for (const run of runsOf(pending(grammarCache, blocks))) {
+      try {
+        store(grammarCache, run, await grammarCheck(run.text));
+      } catch {
+        break;
+      }
     }
   }
 
   if (seq !== passSeq || view.isDestroyed) return;
-  const blocks = proseBlocks(view.state.doc);
-  draw(view, decorationsFor(view.state.doc, blocks, useProofing.getState().ignored));
-  prune(blocks);
+  const current = proseBlocks(view.state.doc);
+  draw(view, decorationsFor(view.state.doc, current, wanted()));
+  prune(spellCache, current);
+  prune(grammarCache, current);
+}
+
+/** Harper's half of a decoration's spec, and null for a spelling one. */
+function grammarOf(value: unknown): ProofTarget["grammar"] {
+  if (typeof value !== "object" || value === null) return null;
+  const { kind, message } = value as { kind?: unknown; message?: unknown };
+  return typeof kind === "string" && typeof message === "string" ? { kind, message } : null;
 }
 
 /**
- * Puts the menu over one underlined word, whichever of the three ways in found it.
+ * Puts the menu over one underlined run of text, whichever of the three ways in found it.
  *
  * `fromKeyboard` is the only thing that separates a chord from a pointer once the word is known,
  * and the menu reads it to decide whether to take focus. A click has already put the caret where
@@ -306,7 +420,7 @@ async function pass(view: EditorView): Promise<void> {
  * offered.
  */
 function openFor(view: EditorView, hit: Decoration, fromKeyboard: boolean): boolean {
-  const spec = hit.spec as { word?: unknown; suggestions?: unknown };
+  const spec = hit.spec as { word?: unknown; suggestions?: unknown; grammar?: unknown };
   if (typeof spec.word !== "string") return false;
 
   const start = view.coordsAtPos(hit.from);
@@ -319,6 +433,7 @@ function openFor(view: EditorView, hit: Decoration, fromKeyboard: boolean): bool
       0,
       MAX_SUGGESTIONS,
     ),
+    grammar: grammarOf(spec.grammar),
     left: (start.left + end.left) / 2,
     top: start.top,
     // A word that wraps across two lines ends on the lower one, which is where the menu belongs.
@@ -328,7 +443,7 @@ function openFor(view: EditorView, hit: Decoration, fromKeyboard: boolean): bool
   return true;
 }
 
-/** The misspelling under a position, if the menu should open over one. */
+/** The underlined text under a position, if the menu should open over it. */
 function menuAt(view: EditorView, pos: number): boolean {
   // A document held open while a conflict is resolved is one nothing may edit, and a menu whose
   // every item is an edit has nothing to offer there. The underlines stay; the menu does not open.
@@ -337,14 +452,20 @@ function menuAt(view: EditorView, pos: number): boolean {
   if (!decorations) return false;
   const found = decorations.find(pos, pos);
   if (found.length === 0) return false;
-  // A position at the seam between two words touches both, so a hit that actually contains it wins.
-  const hit = found.find((deco) => deco.from < pos && pos < deco.to) ?? found[0];
+  // A position at the seam between two words touches both, so hits that actually contain it win.
+  // Among those, the shortest: a misspelled word inside a phrase Harper flagged carries both marks,
+  // and a click on that word is about the word. The phrase is still one click away, on any of the
+  // characters the word does not cover.
+  const containing = found.filter((deco) => deco.from < pos && pos < deco.to);
+  const hit = (containing.length > 0 ? containing : found).reduce((best, deco) =>
+    deco.to - deco.from < best.to - best.from ? deco : best,
+  );
   return openFor(view, hit, false);
 }
 
 /**
- * The same menu, opened by a chord instead of by a pointer, over the misspelling at the caret or
- * the nearest one to it.
+ * The same menu, opened by a chord instead of by a pointer, over the underlined text at the caret
+ * or the nearest to it, of either kind.
  *
  * Nearest within the caret's own paragraph and no further. The menu is placed at the viewport
  * coordinates of the word it is about, so a search that ran to the end of the document would open a
@@ -397,12 +518,16 @@ class Proofreader implements PluginView {
 
     this.unsubscribe = useProofing.subscribe((next, previous) => {
       // A learned word changes the answer for text nobody has touched, so it is the one thing that
-      // throws away what the checker already said. Ignoring a word does not: it is filtered when the
-      // decorations are built, so putting it back costs nothing.
-      if (next.revision !== previous.revision) cache.clear();
+      // throws away what a checker already said. Only the spelling half: Harper's own spell rule is
+      // off (see src-tauri/src/grammar.rs), so the system dictionary growing a word cannot change a
+      // single thing it said. Ignoring a word throws away nothing either way, since it is filtered
+      // when the decorations are built and putting it back costs nothing.
+      if (next.revision !== previous.revision) spellCache.clear();
       if (
         next.enabled === previous.enabled &&
         next.availability === previous.availability &&
+        next.grammar === previous.grammar &&
+        next.grammarAvailability === previous.grammarAvailability &&
         next.ignored === previous.ignored &&
         next.revision === previous.revision
       ) {
@@ -441,18 +566,25 @@ class Proofreader implements PluginView {
 }
 
 /**
- * Puts a suggestion in place of the word the menu was opened over.
+ * Puts a suggestion in place of the text the menu was opened over, a word for spelling and a phrase
+ * for grammar.
  *
- * One transaction, so one undo takes it back, and refused outright unless the word is still exactly
+ * One transaction, so one undo takes it back, and refused outright unless that text is still exactly
  * where the menu said it was. The menu closes on every document change, so that check should never
  * fail; it is here because this is the one function in the file that can write to somebody's
  * document, and it is worth being unable to write to the wrong part of it.
  *
+ * The one case where it refuses something a user meant is a grammar span reaching across an inline
+ * code span. `blockText` blanked the code into spaces and the document has the code itself there, so
+ * the two do not match and nothing is written. That is the right way round: a phrase Harper judged
+ * without being shown the code in the middle of it is a phrase whose correction would have eaten the
+ * code, and refusing costs a gesture where writing it would cost the line.
+ *
  * No `fits` guard, unlike every insert in src/editor/Editor.tsx, and for the reason src/editor/
  * fits.test.ts gives the find bar's replace: this is text going into the one textblock it came out
  * of, not a node being placed somewhere it may not go. The range is inside a block that `proseBlocks`
- * already refused to send if it was code or raw, and a suggestion is one word, so there is no blank
- * line in it for `holdsText` to be about.
+ * already refused to send if it was code or raw, and a suggestion is a few words at most, so there
+ * is no blank line in it for `holdsText` to be about.
  */
 export function replaceSpelling(target: ProofTarget, suggestion: string): void {
   const view = activeView;

@@ -183,3 +183,61 @@ pub struct SpellIssue {
     #[serde(default)]
     pub suggestions: Vec<String>,
 }
+
+/// An image the PDF exporter has to put on a page.
+///
+/// `data` present means the bytes came with the request, base64 encoded, which is the only way a
+/// mermaid diagram can arrive: the frontend renders it to SVG and there is no file behind it and
+/// never will be. `data` absent means read the file at `path`, which is what an ordinary
+/// `![](photo.jpg)` is, and it is absent far more often than not: base64 encoding every photograph
+/// in a document through the IPC boundary costs a third again in bytes for a file the backend can
+/// already open.
+///
+/// A read goes through the same root guard every other read in fs.rs does. A document is untrusted
+/// input. `![](../../../.ssh/id_rsa)` is a link anybody can type into a markdown file, and an
+/// exporter is not the place where this app starts reading outside an open folder.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageInput {
+    /// How the Typst source refers to it, which is also the key the file resolver answers on.
+    pub path: String,
+    #[serde(default)]
+    pub data: Option<String>,
+}
+
+/// Something the exporter worked around rather than something it refused to do. Payload of the
+/// `pdf-warnings` event, which is how these travel: a compile answers with raw bytes and has
+/// nowhere to put a second value.
+///
+/// `count` is here because the alternative is forty toasts. A document with forty formulas the
+/// converter could not typeset has one problem, not forty, and the user wants to be told once with
+/// a number on it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PdfWarning {
+    /// math | image | typst
+    pub kind: String,
+    pub message: String,
+    pub count: u32,
+}
+
+/// One grammar problem in a run of text handed to the checker.
+///
+/// `start` and `end` are half-open offsets in *characters*, not bytes and not UTF-16 units, for
+/// exactly the reason `SpellIssue` gives: the other end is JavaScript addressing a ProseMirror
+/// document, and ProseMirror counts in code points. Harper already counts that way, so unlike the
+/// spelling path there is no conversion to do and nowhere for one to go wrong.
+///
+/// `kind` is Harper's own name for the rule that fired, which is what the popover shows above the
+/// message so a correction can be judged before it is taken. `suggestions` can be empty: a rule
+/// that can see a sentence is wrong without knowing how to fix it is still worth an underline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrammarIssue {
+    pub start: usize,
+    pub end: usize,
+    pub kind: String,
+    pub message: String,
+    #[serde(default)]
+    pub suggestions: Vec<String>,
+}

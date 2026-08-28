@@ -48,6 +48,9 @@ export const WATCH_EVENT = "watch-event";
 /** The `index-progress` event, whose payload is an `IndexStatus`. */
 export const INDEX_PROGRESS_EVENT = "index-progress";
 
+/** The `pdf-warnings` event, whose payload is a `PdfWarning[]`. */
+export const PDF_WARNINGS_EVENT = "pdf-warnings";
+
 export type MenuAction =
   | "open-folder"
   | "new-doc"
@@ -61,7 +64,10 @@ export type MenuAction =
   | "command-palette"
   | "toggle-sidebar"
   | "check-updates"
-  | "report-issue";
+  | "report-issue"
+  | "export-pdf"
+  | "writing-proofread"
+  | "writing-rewrite";
 
 /**
  * One open folder. `id` is derived from the path, so it survives a relaunch and a root can be
@@ -217,6 +223,56 @@ export interface SpellIssue {
   start: number;
   end: number;
   word: string;
+  suggestions: string[];
+}
+
+/**
+ * An image the PDF exporter has to put on a page.
+ *
+ * `data` present means the bytes travel with the request, base64 encoded, which is the only way a
+ * mermaid diagram can arrive: it is rendered to SVG here and there is no file behind it. `data`
+ * absent means the backend reads the file at `path` itself, which is what an ordinary
+ * `![](photo.jpg)` is and what most images are, because base64 encoding a folder of photographs
+ * through the IPC boundary costs a third again in bytes for files the backend can already open.
+ *
+ * A path read this way is checked against the open roots on the Rust side, because a link in a
+ * document is untrusted input.
+ */
+export interface ImageInput {
+  /** How the Typst source refers to it, which is also the key the file resolver answers on. */
+  path: string;
+  data: string | null;
+}
+
+/**
+ * Something the exporter worked around rather than something it refused to do. Payload of
+ * `pdf-warnings`, which is how these travel: a compile answers with raw bytes and has nowhere to
+ * put a second value.
+ *
+ * `count` is here because the alternative is forty toasts. A document with forty formulas that
+ * would not typeset has one problem, not forty.
+ */
+export interface PdfWarning {
+  kind: "math" | "image" | "typst";
+  message: string;
+  count: number;
+}
+
+/**
+ * One grammar problem in a run of text handed to the checker.
+ *
+ * `start` and `end` are half-open offsets in characters, for the same reason `SpellIssue` gives:
+ * they address a ProseMirror document and ProseMirror counts code points. Harper counts that way
+ * too, so this path has no conversion in it at all.
+ *
+ * `kind` is Harper's own name for the rule that fired, which the popover shows above the message
+ * so a correction can be judged before it is taken. `suggestions` can be empty.
+ */
+export interface GrammarIssue {
+  start: number;
+  end: number;
+  kind: string;
+  message: string;
   suggestions: string[];
 }
 

@@ -49,6 +49,13 @@ export const BINDINGS: readonly Binding[] = [
   { keys: ["cmd+o"], command: "open-folder", context: "document", group: "File", allowInInput: true },
   { keys: ["cmd+n"], command: "new-doc", context: "document", group: "File", allowInInput: true },
   { keys: ["cmd+s"], command: "save", context: "document", group: "File", allowInInput: true },
+  {
+    keys: ["cmd+E"],
+    command: "export-pdf",
+    context: "document",
+    group: "File",
+    allowInInput: true,
+  },
 
   {
     keys: ["cmd+p"],
@@ -89,6 +96,29 @@ export const BINDINGS: readonly Binding[] = [
   {
     keys: ["cmd+;"],
     command: "correct-spelling",
+    context: "document",
+    group: "Editing",
+    allowInInput: true,
+  },
+
+  // Writing Tools' two chords. Like every accelerator this app puts on a native menu item, macOS
+  // fires the menu row before the webview sees a keydown, so in practice these are dispatched
+  // through src/keys/menu.ts rather than by the listener in keymap.ts. They are rows here for the
+  // same reason Cmd+O is: the sheet is generated from this table, and a key the app answers to
+  // that is missing from it would be the one thing this table exists to prevent.
+  //
+  // They are on this app's own Edit rows rather than on Apple's, so that they pass the selection
+  // guard in src/editor/writing.ts. src-tauri/src/writingtools.rs says what that is protecting.
+  {
+    keys: ["alt+F"],
+    command: "writing-proofread",
+    context: "document",
+    group: "Editing",
+    allowInInput: true,
+  },
+  {
+    keys: ["alt+R"],
+    command: "writing-rewrite",
     context: "document",
     group: "Editing",
     allowInInput: true,

@@ -1,11 +1,15 @@
 pub mod dto;
+pub mod fonts;
 pub mod fs;
+pub mod grammar;
 pub mod index;
 mod library;
 #[cfg(target_os = "macos")]
 mod macspell;
+pub mod pdf;
 pub mod spell;
 pub mod watch;
+pub mod writingtools;
 
 use std::sync::Mutex;
 
@@ -57,6 +61,9 @@ fn build_menu<R: Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>
     let save = MenuItemBuilder::with_id("save", "Save")
         .accelerator("CmdOrCtrl+S")
         .build(handle)?;
+    let export_pdf = MenuItemBuilder::with_id("export-pdf", "Export as PDF…")
+        .accelerator("CmdOrCtrl+Shift+E")
+        .build(handle)?;
     let close_folder = MenuItemBuilder::with_id("close-folder", "Close Folder").build(handle)?;
     let check_updates =
         MenuItemBuilder::with_id("check-updates", "Check for Updates…").build(handle)?;
@@ -99,6 +106,7 @@ fn build_menu<R: Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>
                 &command_palette,
                 &PredefinedMenuItem::separator(handle)?,
                 &save,
+                &export_pdf,
                 &PredefinedMenuItem::separator(handle)?,
                 &close_folder,
                 &PredefinedMenuItem::separator(handle)?,
@@ -114,6 +122,7 @@ fn build_menu<R: Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>
                 .item(&command_palette)
                 .item(&PredefinedMenuItem::separator(handle)?)
                 .item(&save)
+                .item(&export_pdf)
                 .item(&PredefinedMenuItem::separator(handle)?)
                 .item(&close_folder)
                 .build()?;
@@ -139,6 +148,28 @@ fn build_menu<R: Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>
             app_submenu.insert(&check_updates, 1)?;
             app_submenu.insert(&settings, 3)?;
             app_submenu.insert(&PredefinedMenuItem::separator(handle)?, 4)?;
+        }
+        // Writing Tools, which is the system's and needs macOS 15.1 with Apple Intelligence on.
+        //
+        // These two rows carry the chords and Apple's own Writing Tools rows deliberately do not,
+        // which is the opposite of what the sibling app does. AppKit performs a key equivalent by
+        // firing its menu item directly, so a chord on the system's row would reach Writing Tools
+        // without passing the selection guard in src/editor/writing.ts, and that guard exists
+        // because a rewrite spanning a link loses its address and one spanning two table cells
+        // widens the table. These ids go through the command table, so they meet the guard.
+        // Exactly one menu item owns each chord either way; this is which one.
+        if let Some(edit) = find_submenu("Edit") {
+            let proofread = MenuItemBuilder::with_id("writing-proofread", "Proofread")
+                .accelerator("Shift+Alt+F")
+                .build(handle)?;
+            let rewrite = MenuItemBuilder::with_id("writing-rewrite", "Rewrite")
+                .accelerator("Shift+Alt+R")
+                .build(handle)?;
+            edit.append_items(&[
+                &PredefinedMenuItem::separator(handle)?,
+                &proofread,
+                &rewrite,
+            ])?;
         }
         if let Some(view) = find_submenu("View") {
             let toggle_sidebar = MenuItemBuilder::with_id("toggle-sidebar", "Toggle Sidebar")
@@ -193,6 +224,10 @@ pub fn run() {
         if let Err(e) = index::open(app.handle()) {
             eprintln!("failed to open the search index: {e}");
         }
+        // The Writing Tools submenu is AppKit's, not build_menu's: the system inserts it into Edit
+        // on its own terms, so when it is there to label is writingtools.rs's problem and not this
+        // file's. One call, whatever it decides to wait for.
+        writingtools::install(app.handle());
         Ok(())
     });
 
@@ -216,6 +251,9 @@ pub fn run() {
                         | "toggle-sidebar"
                         | "check-updates"
                         | "report-issue"
+                        | "export-pdf"
+                        | "writing-proofread"
+                        | "writing-rewrite"
                 ) {
                     app.emit("menu-action", event.id().0.as_str()).ok();
                 }
@@ -253,6 +291,12 @@ pub fn run() {
             spell::spell_learn,
             spell::spell_unlearn,
             spell::spell_available,
+            writingtools::writing_available,
+            writingtools::writing_run,
+            pdf::pdf_compile,
+            pdf::pdf_write,
+            grammar::grammar_available,
+            grammar::grammar_check,
         ])
         .run(context)
         .expect("error while running Margin Docs");

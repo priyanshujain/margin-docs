@@ -1,0 +1,17 @@
+# Empty stand-in for `cubecl-cpu`, used via [patch.crates-io] in ../../Cargo.toml.
+# cubecl-cpu is the LLVM/MLIR JIT CPU runtime pulled (transitively, through burn's disabled GPU
+# backends) by harper-core. It drags in the tracel-llvm / tracel-llvm-bundler crates, which build
+# and bundle an LLVM toolchain and are by a wide margin the most expensive thing in the graph.
+# Replacing it with this empty stub removes that whole subtree. Nothing here is ever compiled
+# (GPU backends are off).
+[package]
+name = "cubecl-cpu"
+version = "0.8.1"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []

@@ -29,6 +29,7 @@ import "./styles/width-menu.css";
 import "./styles/link-picker.css";
 import "./styles/tree.css";
 import "./styles/palette.css";
+import "./styles/settings.css";
 
 import React from "react";
 import ReactDOM from "react-dom/client";

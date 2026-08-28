@@ -20,15 +20,17 @@ import { FindInFiles } from "./components/FindInFiles";
 import { ProofPopover } from "./components/ProofPopover";
 import { QuickOpen } from "./components/QuickOpen";
 import { Recents } from "./components/Recents";
+import { Settings } from "./components/Settings";
 import { Shortcuts } from "./components/Shortcuts";
 import { Sidebar } from "./components/Sidebar";
 import { Titlebar } from "./components/Titlebar";
 import { Toast } from "./components/Toast";
+import { UpdateDialog } from "./components/UpdateDialog";
 import { flushPendingSave, keepBuffer } from "./document";
 import { DocumentEditor, PlainTextEditor, useDocumentFind } from "./editor";
 import { Toolbar, type ToolbarSaveState } from "./editor/Toolbar";
 import { MENU_ACTION_EVENT, isDesktop, isTauri } from "./ipc";
-import { onCommand, type CommandId } from "./keys/commands";
+import { onCommand } from "./keys/commands";
 import { useKeymap } from "./keys/keymap";
 import { handleMenuAction } from "./keys/menu";
 import { openLink } from "./links";
@@ -36,19 +38,10 @@ import { documentKindForPath } from "./model/doc";
 import { useDocument } from "./store/useDocument";
 import { notify } from "./store/useToast";
 import { useWorkspace } from "./store/useWorkspace";
+import { startUpdateChecks } from "./update";
 import { useCompact, useTouch } from "./useMedia";
 import { applyWidth } from "./width";
 import { restoreSession, startWorkspaceEvents } from "./workspace";
-
-/**
- * Commands whose whole result is a panel that this milestone does not have. They are bound keys
- * and native menu rows already, so pressing one has to say something: a key that silently does
- * nothing reads as a broken app rather than as an unfinished one. Each line goes when its panel
- * arrives.
- */
-const UNBUILT: ReadonlyArray<[CommandId, string]> = [
-  ["settings", "There is no settings panel yet. The theme is in the title bar."],
-];
 
 const baseName = (path: string): string => path.slice(path.lastIndexOf("/") + 1);
 
@@ -109,12 +102,16 @@ function App() {
       onCommand("editor-width-narrow", () => applyWidth("narrow")),
       onCommand("editor-width-normal", () => applyWidth("normal")),
       onCommand("editor-width-wide", () => applyWidth("wide")),
-      ...UNBUILT.map(([id, message]) => onCommand(id, () => notify(message))),
     ];
     return () => {
       for (const stop of stops) stop();
     };
   }, []);
+
+  // The check the app makes on its own, which is off unless the setting says otherwise and silent
+  // unless it finds something. Pressing Check for Updates goes through the command table instead
+  // and answers either way, because somebody who asked is owed a sentence.
+  useEffect(() => startUpdateChecks(), []);
 
   const conflict = externalChange === "changed-on-disk";
 
@@ -181,6 +178,8 @@ function App() {
       <CommandPalette />
       <ProofPopover />
       <Shortcuts />
+      <Settings />
+      <UpdateDialog />
       <Toast />
 
       {resolving && conflict && path !== null && (

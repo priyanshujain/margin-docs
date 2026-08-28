@@ -33,13 +33,45 @@ trash = "5"
 rusqlite = { version = "0.40", features = ["bundled"] }
 tokio = { version = "1", features = ["sync", "time"] }
 
+# PDF export. Typst is the typesetter: a document becomes Typst source, the source is compiled in
+# process and the bytes go to whatever the native save panel pointed at. No headless browser, no
+# LaTeX install, nothing for the user to have on their machine first.
+#
+# typst and typst-pdf move together and are pinned to the same minor, because typst-as-lib links
+# against a particular pair and a mismatched trio does not compile. fontdb finds a system face for
+# the one thing this app does not bundle, a monospace family for code.
+typst = "0.14.2"
+typst-pdf = "0.14.2"
+typst-as-lib = "0.15.5"
+fontdb = "0.23"
+# Inline image bytes arrive over the IPC boundary as base64: a mermaid diagram is rendered to SVG
+# in the webview and has no file behind it to read.
+base64 = "0.22"
+
+# Grammar, which is Harper's and is the one checker this app does ship. Spelling stays the system's
+# below; Harper's own spell rule is turned off in grammar.rs for that reason.
+#
+# Pinned exactly: the [patch] stubs at the foot of this file are tied to this version's burn/cubecl
+# graph. A minor bump could silently invalidate a patch ("unused"), and the whole CUDA and LLVM
+# subtree those stubs remove would come back. Bump deliberately and re-audit the stubs.
+harper-core = { version = "=2.5.0", features = ["concurrent"] }
+
 # Spelling is the system's, not ours. NSSpellChecker is the same checker every other Mac app
 # corrects into, so a word learned in Mail is not underlined here, and it carries the user's own
 # languages without this app shipping a dictionary. These objc2 crates are already in the graph
 # through Tauri, so asking for them adds nothing to the build but the features named.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", features = ["NSSpellChecker"] }
+# NSMenu and its neighbours are for Writing Tools, which has no API this app can call: the system
+# puts a submenu on Edit and the only way in is to find that item and perform it. Deliberately not
+# NSWritingToolsCoordinator, which the sibling asks for and never uses.
+objc2-app-kit = { version = "0.3", features = [
+    "NSSpellChecker",
+    "NSApplication",
+    "NSMenu",
+    "NSMenuItem",
+    "NSResponder",
+] }
 objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSRange", "NSTextCheckingResult"] }
 
 # There is no auto-updater and no process to restart on a phone: the store is the update channel.
@@ -50,3 +82,21 @@ tauri-plugin-updater = "2"
 
 [dev-dependencies]
 tempfile = "3"
+
+# harper-core transitively declares optional, disabled GPU backends through burn: a `burn-cuda`
+# CUDA backend and, under cubecl, a `cubecl-cpu` LLVM/MLIR JIT runtime. Both are off, and neither
+# is ever compiled, but Cargo still version-resolves and downloads the whole dead subtree behind
+# them, which is the cuda toolchain crates on one side and tracel-llvm plus its LLVM bundler on the
+# other. Replacing the two roots with empty stubs takes several hundred crates out of the graph and
+# a large part of the build with them.
+[patch.crates-io]
+burn-cuda = { path = "stubs/burn-cuda" }
+cubecl-cpu = { path = "stubs/cubecl-cpu" }
+
+# Optimize dependencies even in dev builds. Harper's grammar engine, and the burn-ndarray POS
+# tagger under it, is roughly ten times slower unoptimized, which is the difference between a check
+# that lands while the user is still typing the next word and one that takes seconds. This compiles
+# dependencies at opt-level 3 and leaves this crate itself unoptimized, so incremental rebuilds of
+# our own code stay fast. The first build after adding it is slower, once.
+[profile.dev.package."*"]
+opt-level = 3

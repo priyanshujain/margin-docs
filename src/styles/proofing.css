@@ -1,4 +1,4 @@
-/* Spelling: the underline on the page, and the menu that opens over it.
+/* Spelling and grammar: the underlines on the page, and the menu that opens over one.
  *
  * The underline is a text decoration rather than a border or a background, because it is the one
  * way of drawing under a word that costs the line nothing: a decoration is painted inside the line
@@ -8,18 +8,38 @@
  * red rather than a hex value of this file's own. skip-ink is off so a descender does not cut a gap
  * in the dots and leave a word looking half underlined.
  *
+ * Grammar is the second mark and it is told apart three ways: dashed rather than dotted, quieter,
+ * and sitting a little lower. The pattern is doing as much of that work as the colour, so the two
+ * are still two marks to a reader who cannot tell the colours apart, and the lower offset is what
+ * keeps both visible when they land on the same word, which they do whenever a misspelling sits
+ * inside a phrase Harper flagged. The colour is --ink-soft rather than a hue of its own: this app's
+ * palette is a warm monochrome with one red in it, spending that red on the commoner and more
+ * certain of the two marks is the right way round, and a blue borrowed from another app's grammar
+ * checker would be the only blue anywhere in the product.
+ *
  * The menu borrows .row-menu-pop's shape from app.css, which is the app's one popup surface: same
  * paper, same hairline, same shadow, same radius, same layer. The suggestions are set in the
  * document's own face and not the UI one, since a suggestion is a word from the user's prose and
- * seeing it in the type it will be set in is half of choosing it. */
+ * seeing it in the type it will be set in is half of choosing it. Everything above them is the UI
+ * face, because Harper's message is the app talking rather than the document. */
 
-.prose .proof-mark {
-  text-decoration: underline dotted var(--danger);
-  -webkit-text-decoration: underline dotted var(--danger);
+.prose .proof-mark,
+.prose .proof-mark-grammar {
   text-decoration-skip-ink: none;
   text-decoration-thickness: 1.5px;
   -webkit-text-decoration-thickness: 1.5px;
   text-underline-offset: 0.16em;
+}
+
+.prose .proof-mark {
+  text-decoration: underline dotted var(--danger);
+  -webkit-text-decoration: underline dotted var(--danger);
+}
+
+.prose .proof-mark-grammar {
+  text-decoration: underline dashed var(--ink-soft);
+  -webkit-text-decoration: underline dashed var(--ink-soft);
+  text-underline-offset: 0.28em;
 }
 
 .proof-pop {
@@ -73,6 +93,30 @@
 .proof-suggestion:focus-visible,
 .proof-action:focus-visible {
   outline-offset: -2px;
+}
+
+/* Harper's category, drawn as app.css draws .menu-label, which is this app's one way of putting a
+   heading above a group of items in a popup. */
+.proof-kind {
+  margin: 0;
+  padding: 6px 10px 2px;
+  font-family: var(--font-ui);
+  font-size: var(--t-1);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/* The message itself, in full ink and wrapping, because it is the thing the menu was opened to
+   read. The max-width on .proof-pop above is what keeps it to a few short lines. */
+.proof-message {
+  margin: 0;
+  padding: 0 10px 6px;
+  font-family: var(--font-ui);
+  font-size: var(--t-3);
+  line-height: 1.45;
+  color: var(--ink);
 }
 
 .proof-none {

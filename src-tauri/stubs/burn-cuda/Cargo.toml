@@ -1,0 +1,21 @@
+# Empty stand-in for `burn-cuda`, used via [patch.crates-io] in ../../Cargo.toml.
+# harper-core pulls burn-cuda only as an optional, disabled CUDA backend. This stub keeps
+# the heavy cubecl + tracel-llvm subtree out of the dependency graph. Never compiled.
+# The feature names below must match the ones `burn` references via `burn-cuda?/...` so that
+# Cargo's feature validation passes; they are all empty no-ops.
+[package]
+name = "burn-cuda"
+version = "0.19.1"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []
+std = []
+doc = []
+fusion = []
+autotune = []
+autotune-checks = []

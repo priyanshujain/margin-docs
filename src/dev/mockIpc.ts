@@ -19,6 +19,7 @@ import type {
   AssetResult,
   Backlink,
   FileNode,
+  GrammarIssue,
   IndexStatus,
   MatchRange,
   QuickOpenHit,
@@ -209,6 +210,47 @@ const DEV_MISSPELLINGS: Record<string, string[]> = {
 
 /** Words `spell_learn` was told about this session. The real checker teaches the whole machine. */
 const devLearned = new Set<string>();
+
+/**
+ * Grammar in a browser is not Harper either. It is a handful of patterns, which is enough to put a
+ * real underline under a real phrase, open a real popover and take a real correction. The rule
+ * names are Harper's own, so the popover shows what it will show in the app.
+ */
+const DEV_GRAMMAR: ReadonlyArray<{ pattern: RegExp; kind: string; message: string; fix: string }> = [
+  {
+    pattern: /\bthe the\b/gi,
+    kind: "Repetition",
+    message: "Repeated word.",
+    fix: "the",
+  },
+  {
+    pattern: /\bshould of\b/gi,
+    kind: "WordChoice",
+    message: "“Should of” is not a phrase; “should have” is.",
+    fix: "should have",
+  },
+  {
+    pattern: /\bthere own\b/gi,
+    kind: "WordChoice",
+    message: "“There” is a place. The possessive is “their”.",
+    fix: "their own",
+  },
+  {
+    pattern: /\bis are\b/gi,
+    kind: "Agreement",
+    message: "Two verbs where one belongs.",
+    fix: "are",
+  },
+];
+
+/** Set to keep the dev fixture from claiming a Writing Tools menu the browser plainly has not got. */
+const noWritingTools = (): boolean => {
+  try {
+    return localStorage.getItem("margindocs-dev-no-writing-tools") === "1";
+  } catch {
+    return false;
+  }
+};
 
 export async function mockCall<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const a = (args ?? {}) as Record<string, never>;
@@ -478,6 +520,47 @@ export async function mockCall<T>(command: string, args?: Record<string, unknown
 
     case "spell_unlearn":
       devLearned.delete((a.word as unknown as string).toLowerCase());
+      return undefined as T;
+
+    case "grammar_available":
+      return true as unknown as T;
+
+    case "grammar_check": {
+      const text = (a.text as unknown as string) ?? "";
+      const issues: GrammarIssue[] = [];
+      for (const rule of DEV_GRAMMAR) {
+        // Fresh, because a shared regex with the global flag carries `lastIndex` between calls and
+        // the second paragraph of a document would start matching wherever the first one stopped.
+        for (const match of text.matchAll(new RegExp(rule.pattern.source, rule.pattern.flags))) {
+          issues.push({
+            start: match.index,
+            end: match.index + match[0].length,
+            kind: rule.kind,
+            message: rule.message,
+            suggestions: [rule.fix],
+          });
+        }
+      }
+      issues.sort((x, y) => x.start - y.start);
+      return issues as unknown as T;
+    }
+
+    // Writing Tools has nothing behind it in a browser: there is no Edit menu to walk and no system
+    // to rewrite anything. What the fixture can serve is the two answers the UI has to handle, and
+    // which one it gives is a storage key, so a test can drive either.
+    case "writing_available":
+      return !noWritingTools() as unknown as T;
+
+    case "writing_run":
+      return undefined as T;
+
+    // A PDF the fixture cannot compile, and a header is enough: what the browser suite asserts about
+    // an export is that it asked, that it wrote nothing to the document, and that the bytes went to
+    // the panel's path. None of that needs a typesetter.
+    case "pdf_compile":
+      return new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37]).buffer as unknown as T;
+
+    case "pdf_write":
       return undefined as T;
 
     default:

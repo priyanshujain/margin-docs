@@ -12,6 +12,7 @@ export const MENU_IDS: readonly CommandId[] = [
   "new-doc",
   "new-folder",
   "save",
+  "export-pdf",
   "close-folder",
   "settings",
   "find",
@@ -21,6 +22,8 @@ export const MENU_IDS: readonly CommandId[] = [
   "toggle-sidebar",
   "check-updates",
   "report-issue",
+  "writing-proofread",
+  "writing-rewrite",
 ];
 
 const known = new Set<string>(MENU_IDS);

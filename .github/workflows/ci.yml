@@ -55,7 +55,7 @@ jobs:
       # Every target except `no_write_on_open`, which gets the step below to itself.
       - name: Test
         working-directory: src-tauri
-        run: cargo test --lib --bins --test fs --test fts5 --test watch --test watch_payload
+        run: cargo test --lib --bins --test fs --test fts5 --test watch --test watch_payload --test pdf --test grammar --test export_writes_only_the_pdf
 
       # The suite that checks the promise the whole project rests on, that the editor writes
       # nothing the user did not edit. It runs against a real git repository rather than against a

@@ -32,6 +32,13 @@ jobs:
             IFS=. read -r MAJOR MINOR PATCH <<< "$CURRENT"
             VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
           fi
+          # This string becomes a git tag, a TOML value and a JSON value, and it is typed into a
+          # box by hand. Anything that is not three numbers is a release that goes wrong somewhere
+          # further down, where it is much harder to read.
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::'$VERSION' is not a version. Give three numbers separated by dots, such as 0.2.0."
+            exit 1
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
           echo "Releasing v$VERSION"
@@ -43,7 +50,29 @@ jobs:
           tmp=$(mktemp)
           jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > "$tmp" && mv "$tmp" src-tauri/tauri.conf.json
           jq --arg v "$VERSION" '.version = $v' package.json > "$tmp" && mv "$tmp" package.json
-          sed -i "0,/^version = \".*\"/s//version = \"$VERSION\"/" src-tauri/Cargo.toml
+          # The crate's own version, and only that one. Anchored to the [package] section rather
+          # than to the first `version =` line in the file, because a dependency written in the
+          # long form puts `version = "0.4"` on a line of its own and the first such line is not
+          # necessarily the crate's. Bumping the wrong one is a release that builds and ships the
+          # version before it.
+          awk -v v="$VERSION" '
+            /^\[/ { section = $0 }
+            section == "[package]" && !done && /^version[[:space:]]*=/ {
+              print "version = \"" v "\""
+              done = 1
+              next
+            }
+            { print }
+            END { if (!done) exit 1 }
+          ' src-tauri/Cargo.toml > "$tmp" || {
+            echo "::error::No version key under [package] in src-tauri/Cargo.toml. Nothing was bumped."
+            exit 1
+          }
+          mv "$tmp" src-tauri/Cargo.toml
+          if ! grep -q "^version = \"$VERSION\"\$" src-tauri/Cargo.toml; then
+            echo "::error::src-tauri/Cargo.toml does not carry version $VERSION after the bump."
+            exit 1
+          fi
 
       - name: Commit and tag
         env:
@@ -111,6 +140,62 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      # Apple codesigning and notarization. Put into the environment here rather than passed
+      # straight to the build step, because the bundler reads all of these with `var_os` and an
+      # empty string counts as set: a step that always passed `${{ secrets.APPLE_CERTIFICATE }}`
+      # would make a repository without a certificate fail on an empty .p12 rather than fall back
+      # to an ad hoc signature. What is not written below is simply not in the build's environment.
+      #
+      # So a repository with none of these secrets still builds and still publishes. What it gets
+      # is an ad hoc signed bundle, which is fine to install by hand and is not fine as an update:
+      # macOS will not let one replace a Developer ID signed copy. docs/release.md has the whole of
+      # that, including why self-update cannot work until the certificate exists.
+      #
+      # Half-configured is the one case that fails rather than warning. A repository that has a
+      # certificate but no notarization credentials produces a signed bundle Gatekeeper still
+      # refuses on any machine that has not seen it before, and doing that quietly is worse than
+      # not building.
+      - name: Prepare Apple signing
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          keep() {
+            delim="EOF_$(openssl rand -hex 12)"
+            {
+              printf '%s<<%s\n' "$1" "$delim"
+              printf '%s\n' "$2"
+              printf '%s\n' "$delim"
+            } >> "$GITHUB_ENV"
+          }
+
+          if [ -z "$APPLE_CERTIFICATE" ] && [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+            echo "::warning::No Developer ID certificate is configured. This build will be ad hoc signed, and installed copies will not be able to update themselves. See docs/release.md."
+            exit 0
+          fi
+
+          if [ -z "$APPLE_CERTIFICATE" ] || [ -z "$APPLE_CERTIFICATE_PASSWORD" ] || [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+            echo "::error::Apple signing is half configured. APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD and APPLE_SIGNING_IDENTITY are set together or not at all."
+            exit 1
+          fi
+
+          if [ -z "$APPLE_ID" ] || [ -z "$APPLE_PASSWORD" ] || [ -z "$APPLE_TEAM_ID" ]; then
+            echo "::error::A Developer ID signed build has to be notarized or Gatekeeper refuses it on any machine that has not seen it before. Set APPLE_ID, APPLE_PASSWORD and APPLE_TEAM_ID."
+            exit 1
+          fi
+
+          keep APPLE_CERTIFICATE "$APPLE_CERTIFICATE"
+          keep APPLE_CERTIFICATE_PASSWORD "$APPLE_CERTIFICATE_PASSWORD"
+          keep APPLE_SIGNING_IDENTITY "$APPLE_SIGNING_IDENTITY"
+          keep APPLE_ID "$APPLE_ID"
+          keep APPLE_PASSWORD "$APPLE_PASSWORD"
+          keep APPLE_TEAM_ID "$APPLE_TEAM_ID"
+          echo "Signing as a Developer ID application and notarizing."
+
       - name: Build and upload
         uses: tauri-apps/tauri-action@v0
         env:
@@ -134,6 +219,17 @@ jobs:
           gh release download "$TAG" --repo "$REPO" --pattern latest.json --output latest.json --clobber
           echo "Platforms in latest.json:"
           jq '.platforms | keys' latest.json
+
+          # The manifest has to describe this release and not the one before it. tauri-action writes
+          # the version out of the manifests the build job checked out, so a mismatch here means the
+          # tag and the bump have come apart somewhere, and publishing it would tell every installed
+          # copy that the version it is already running is the newest one.
+          MANIFEST_VERSION=$(jq -r '.version // ""' latest.json)
+          if [ "${MANIFEST_VERSION#v}" != "${TAG#v}" ]; then
+            echo "::error::latest.json says version '$MANIFEST_VERSION' but the tag is '$TAG'. Refusing to publish a manifest that does not describe this release."
+            exit 1
+          fi
+
           # A universal build emits one .app.tar.gz, but tauri-action writes it into latest.json
           # under both darwin-aarch64 and darwin-x86_64, pointing them at the same file and the same
           # signature. It has to: an installed copy asks the manifest for the architecture it is
@@ -141,10 +237,22 @@ jobs:
           # darwin-universal would offer nobody an update. Those two keys are the whole manifest for
           # this app, and a release that is missing either one is a release half the users cannot
           # take.
+          #
+          # The signature is checked alongside the url because an unsigned entry is not a smaller
+          # problem than a missing one. The updater refuses a download whose signature does not
+          # verify against the public key baked into the app, so an entry with an empty signature is
+          # an update every installed copy will offer, download and then reject.
           for key in darwin-aarch64 darwin-x86_64; do
-            if ! jq -e ".platforms[\"$key\"].url" latest.json > /dev/null; then
+            url=$(jq -r ".platforms[\"$key\"].url // \"\"" latest.json)
+            signature=$(jq -r ".platforms[\"$key\"].signature // \"\"" latest.json)
+            if [ -z "$url" ]; then
               echo "::error::latest.json is missing platform '$key': refusing to publish a partial update manifest. Re-run the release."
               exit 1
             fi
+            if [ -z "$signature" ]; then
+              echo "::error::latest.json has no signature for platform '$key'. An installed copy would download the update and refuse it. Check that TAURI_SIGNING_PRIVATE_KEY is set."
+              exit 1
+            fi
           done
+
           gh release edit "$TAG" --repo "$REPO" --draft=false --latest
