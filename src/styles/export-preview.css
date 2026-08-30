@@ -1,0 +1,168 @@
+/* The PDF preview, drawn over the editor pane.
+
+   Square and unshadowed, unlike every other panel in the app, because it is not floating over the
+   page: it is standing where the page was. The pane it covers runs to the window's edges on three
+   sides, so a rounded corner would show a sliver of the document underneath and read as a bug. The
+   scrim behind it still dims the sidebar, which is what says the app is waiting on this.
+
+   The pages themselves are white on --shell rather than on --paper, in both themes. A PDF is white
+   paper, that is what the file will look like when it is opened anywhere else, and a preview that
+   inverted with the app's theme would be showing something that does not exist. */
+
+.preview-overlay {
+  z-index: 30;
+}
+
+.preview-panel {
+  display: flex;
+  flex-direction: column;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.preview-bar {
+  flex: none;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+}
+
+.preview-title {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-book);
+  font-size: var(--t-4);
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-count {
+  font-family: var(--font-ui);
+  font-size: var(--t-2);
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.preview-zoom {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* A fixed width and tabular figures, so stepping through 75%, 100%, 125% does not shuffle the
+   buttons either side of it. */
+.preview-zoom span {
+  width: 44px;
+  text-align: center;
+  font-family: var(--font-ui);
+  font-size: var(--t-2);
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.preview-bar .icon-button:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.preview-warn {
+  flex: none;
+  padding: 9px 18px;
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+  font-family: var(--font-ui);
+  font-size: var(--t-2);
+  text-align: center;
+  border-bottom: 1px solid var(--line);
+}
+
+.preview-stage {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 28px;
+  background: var(--shell);
+}
+
+/* max-content so a page zoomed past the stage's width scrolls sideways instead of being squeezed,
+   and min-width 100% so one narrower than the stage still centres. */
+.preview-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  width: max-content;
+  min-width: 100%;
+  margin: 0 auto;
+}
+
+.preview-page {
+  flex: none;
+  background: #fff;
+  border-radius: 2px;
+  box-shadow: var(--shadow-page);
+  overflow: hidden;
+}
+
+.preview-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.preview-loading {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+
+.preview-loading p {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--t-3);
+  color: var(--ink-soft);
+}
+
+.preview-spinner {
+  width: 30px;
+  height: 30px;
+  border: 3px solid var(--line-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: preview-spin 0.7s linear infinite;
+}
+
+@keyframes preview-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* A compile that failed says why, in the compiler's own words and on its own lines. Wrapped rather
+   than scrolled sideways: a Typst error is a paragraph, not a line of code. */
+.preview-error {
+  margin: 0 auto;
+  max-width: 60ch;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: var(--t-3);
+  line-height: 1.6;
+  color: var(--danger-ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preview-spinner {
+    animation-duration: 2.4s;
+  }
+}

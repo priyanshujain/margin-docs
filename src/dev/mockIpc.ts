@@ -563,6 +563,12 @@ export async function mockCall<T>(command: string, args?: Record<string, unknown
     case "pdf_write":
       return undefined as T;
 
+    // Three families a browser is certain to resolve, so the "System" half of the font picker has
+    // rows in it and can be clicked. The real list is whatever this machine has installed, which is
+    // not something a fixture gets to pretend to know.
+    case "fonts_list_system":
+      return ["Courier New", "Georgia", "Helvetica"] as unknown as T;
+
     default:
       throw new Error(`dev mock has no handler for ${command}`);
   }

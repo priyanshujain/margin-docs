@@ -41,6 +41,46 @@ static FACES: [&[u8]; 9] = [
     include_bytes!("../fonts/HankenGrotesk-BoldItalic.ttf"),
 ];
 
+// The other four families src/model/fonts.ts offers, in the variable files public/fonts already
+// ships for the editor, and loaded only when a document is actually set in one.
+//
+// These carry the caveat the nine above exist to avoid, and it is not worth cutting eight more
+// static instances to fix. Typst lays a variable file out at its default instance, so a document
+// set in EB Garamond exports with its headings at the same weight as its body: the face is right,
+// the hierarchy is flatter than the screen. The two the app defaults to are the two that export
+// perfectly, and choosing one of these is choosing a face rather than a fallback.
+static EB_GARAMOND: [&[u8]; 2] = [
+    include_bytes!("../../public/fonts/EBGaramond-VF.ttf"),
+    include_bytes!("../../public/fonts/EBGaramond-Italic-VF.ttf"),
+];
+static LORA: [&[u8]; 2] = [
+    include_bytes!("../../public/fonts/Lora-VF.ttf"),
+    include_bytes!("../../public/fonts/Lora-Italic-VF.ttf"),
+];
+static SOURCE_SERIF: [&[u8]; 2] = [
+    include_bytes!("../../public/fonts/SourceSerif4-VF.ttf"),
+    include_bytes!("../../public/fonts/SourceSerif4-Italic-VF.ttf"),
+];
+static FRAUNCES: [&[u8]; 2] = [
+    include_bytes!("../../public/fonts/Fraunces-VF.ttf"),
+    include_bytes!("../../public/fonts/Fraunces-Italic-VF.ttf"),
+];
+
+/// The bytes behind one `BundledFont` id from src/model/fonts.ts.
+///
+/// Literata and Hanken Grotesk are absent on purpose rather than missing: `FACES` already holds
+/// their nine static instances and they are loaded for every export, so naming either here would
+/// hand Typst the same family twice and let the variable copy win.
+fn bundled_faces(id: &str) -> &'static [&'static [u8]] {
+    match id {
+        "eb-garamond" => &EB_GARAMOND,
+        "lora" => &LORA,
+        "source-serif" => &SOURCE_SERIF,
+        "fraunces" => &FRAUNCES,
+        _ => &[],
+    }
+}
+
 // mitex 0.2.5, vendored under src-tauri/vendor/mitex with its LICENSE, and served as ordinary
 // paths under `/mitex/` rather than through Typst's package system. A package spec would mean a
 // download on first export and a cache directory to keep, for a dependency that is 380K and never
@@ -242,7 +282,7 @@ fn compile_once(
     Ok((bytes, warnings.into_iter().collect()))
 }
 
-/// Compiles Typst source to PDF bytes, with whatever the compiler had to work around.
+/// Compiles Typst source to PDF bytes, in the app's default pair of faces.
 ///
 /// Separate from the command so a test can reach it: a `#[tauri::command]` taking an `AppHandle`
 /// needs a running app, and none of the work below wants one.
@@ -250,6 +290,22 @@ pub fn compile(
     source: String,
     images: &[ImageInput],
     root_paths: &[String],
+) -> Result<(Vec<u8>, Vec<PdfWarning>), String> {
+    compile_in(source, images, root_paths, &[], &[])
+}
+
+/// The same, for a document set in something other than the default.
+///
+/// `bundled` are ids from src/model/fonts.ts and `system` are family names off this machine, both
+/// as the converter named them in the preamble it wrote. Naming a face Typst has no bytes for is a
+/// warning and a fallback rather than a failure, so an id this build does not know and a family
+/// that has since been uninstalled both end in a PDF.
+pub fn compile_in(
+    source: String,
+    images: &[ImageInput],
+    root_paths: &[String],
+    bundled: &[String],
+    system: &[String],
 ) -> Result<(Vec<u8>, Vec<PdfWarning>), String> {
     let mut warnings: Vec<PdfWarning> = Vec::new();
 
@@ -272,6 +328,16 @@ pub fn compile(
     let mut fallbacks = crate::fonts::fallbacks();
     let mut fonts: Vec<Vec<u8>> = FACES.iter().map(|face| face.to_vec()).collect();
     fonts.append(&mut fallbacks.fonts);
+
+    // The face the author chose, if it is not one of the two already in `FACES`. A system family is
+    // read off this machine, which is the one place an export can differ between two computers, and
+    // is the caveat the picker states next to the "System" group.
+    for id in bundled {
+        fonts.extend(bundled_faces(id).iter().map(|face| face.to_vec()));
+    }
+    for family in system {
+        fonts.extend(crate::fonts::system_faces(family));
+    }
 
     let source = format!("{}{source}", font_preamble(&fallbacks));
 
@@ -322,6 +388,8 @@ pub fn pdf_compile(
     app: tauri::AppHandle,
     source: String,
     images: Vec<ImageInput>,
+    bundled_fonts: Vec<String>,
+    system_fonts: Vec<String>,
 ) -> Result<tauri::ipc::Response, String> {
     // The same gate `fs::checked` puts in front of every other read, reached the same way it is:
     // the open roots out of shared state, then `resolve_in_roots`. The lock is dropped before the
@@ -332,7 +400,7 @@ pub fn pdf_compile(
         open.iter().map(|root| root.path.clone()).collect()
     };
 
-    let (bytes, warnings) = compile(source, &images, &root_paths)?;
+    let (bytes, warnings) = compile_in(source, &images, &root_paths, &bundled_fonts, &system_fonts)?;
     if !warnings.is_empty() {
         app.emit("pdf-warnings", warnings).ok();
     }

@@ -15,6 +15,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Backlinks } from "./components/Backlinks";
 import { CommandPalette } from "./components/CommandPalette";
 import { ConflictDialog } from "./components/ConflictDialog";
+import { ExportPreview } from "./components/ExportPreview";
 import { FindBar } from "./components/FindBar";
 import { FindInFiles } from "./components/FindInFiles";
 import { ProofPopover } from "./components/ProofPopover";
@@ -36,6 +37,7 @@ import { handleMenuAction } from "./keys/menu";
 import { openLink } from "./links";
 import { documentKindForPath } from "./model/doc";
 import { useDocument } from "./store/useDocument";
+import { useDocumentFonts } from "./store/useDocumentFonts";
 import { notify } from "./store/useToast";
 import { useWorkspace } from "./store/useWorkspace";
 import { startUpdateChecks } from "./update";
@@ -96,6 +98,14 @@ function App() {
       void pending.then((stop) => stop()).catch(() => {});
     };
   }, []);
+
+  // The face the page is set in belongs to the document rather than to the app, so it is applied
+  // here, on the path, rather than restored once at boot the way the theme and the width are. A
+  // closed document takes the app back to its default pair, which is what the empty pane behind it
+  // is drawn in anyway.
+  useEffect(() => {
+    useDocumentFonts.getState().openFor(path);
+  }, [path]);
 
   useEffect(() => {
     const stops = [
@@ -176,6 +186,7 @@ function App() {
       <QuickOpen />
       <FindInFiles />
       <CommandPalette />
+      <ExportPreview />
       <ProofPopover />
       <Shortcuts />
       <Settings />

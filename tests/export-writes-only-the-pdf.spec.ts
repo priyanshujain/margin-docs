@@ -22,12 +22,23 @@
 // wrote nothing because it never got past the first paragraph is the shape of green this suite is
 // built to refuse.
 //
-// WHAT A BROWSER CANNOT REACH. `exportPdf` gates on `isDesktop`, which is `isTauri` and not a
+// The export is two gestures now rather than one. Cmd-E opens the preview in
+// src/components/ExportPreview.tsx, which compiles and puts the pages on screen; Save PDF is what
+// reaches the native panel and the write. That changes the shape of this test and not its subject:
+// the promise is still that nothing between the keystroke and the write touches the document, and
+// the command log below is still the whole of the evidence. If anything, the window in which a
+// stray save could hide got longer, because the buffer now sits dirty behind an open panel for as
+// long as the user looks at the pages.
+//
+// WHAT A BROWSER CANNOT REACH. The command gates on `isDesktop`, which is `isTauri` and not a
 // phone. `isTauri` reads `__TAURI_INTERNALS__` off the window and tests/disk.ts puts that there at
-// document start, so the gate opens and the whole path runs: convert, draw, compile, panel, write.
-// What is behind it is the dev fixture, so `pdf_compile` answers with a PDF header instead of a
-// typeset document and `pdf_write` puts nothing anywhere. That the compiler produces a real PDF and
-// that the write lands where it was pointed are Rust questions, and they are asked in
+// document start, so the gate opens and the whole path runs: convert, draw, compile, preview,
+// panel, write. What is behind it is the dev fixture, so `pdf_compile` answers with a PDF header
+// instead of a typeset document and `pdf_write` puts nothing anywhere. Eight bytes is not a PDF
+// pdf.js can open, so the preview's stage stays empty here and the page count stays at zero: what
+// this suite drives is the bar around it, which is live either way because the bytes it saves came
+// from the compiler and not from the reader. That the compiler produces a real PDF, that pdf.js
+// draws it, and that the write lands where it was pointed are questions for a real build and for
 // src-tauri/tests/export_writes_only_the_pdf.rs. The one piece nothing can drive from either side
 // is the native save panel itself: it is an AppKit window, so this spec answers the command for it
 // and cannot say what a real panel would hand back for a name the user typed. That distinction
@@ -200,6 +211,23 @@ async function runFromMenu(page: Page, command: string): Promise<void> {
   expect(delivered, "the app has no menu-action listener to fire at").toBeGreaterThan(0);
 }
 
+const preview = (page: Page) => page.locator(".preview-panel");
+const savePdf = (page: Page) => preview(page).locator(".btn-primary");
+
+/**
+ * Opens the preview and waits for the compile behind it to finish.
+ *
+ * Save is disabled until there are bytes to save, so a live button is the signal that `pdf_compile`
+ * has answered. Waiting on that rather than on the pages is deliberate: the fixture's eight bytes
+ * never become pages, and a test that waited for a canvas would be waiting for the compiler this
+ * build does not have.
+ */
+async function openPreview(page: Page): Promise<void> {
+  await runFromMenu(page, "export-pdf");
+  await expect(preview(page)).toBeVisible();
+  await expect(savePdf(page)).toBeEnabled({ timeout: EXPORTED });
+}
+
 /**
  * Types a character into the first paragraph and holds the save that would follow, so the buffer is
  * dirty and the file is not, for as long as the caller needs. Answers with the log as it stood the
@@ -242,8 +270,18 @@ test("an export of a document with unsaved edits writes nothing but the PDF", as
     window.__savePanel = target;
   }, TARGET);
 
-  await runFromMenu(page, "export-pdf");
+  await openPreview(page);
+
+  // The compile happened on the way into the preview and nothing has been written yet, which is
+  // the half of this flow that did not exist before. A panel that had reached for the save dialog
+  // on its own would show up here.
+  const compiled = (await sent(page)).slice(line).map((call) => call.command);
+  expect(compiled).toEqual(["plugin:event|listen", "pdf_compile", "plugin:event|unlisten"]);
+
+  await savePdf(page).click();
   await expect(toast(page)).toContainText("Exported README.pdf", { timeout: EXPORTED });
+  // A written file is the end of the preview's job, so it closes behind the toast.
+  await expect(preview(page)).toHaveCount(0);
 
   const during = (await sent(page)).slice(line);
 
@@ -320,9 +358,10 @@ test("cancelling the save panel leaves the document exactly where it was", async
   await expect(page.locator(".prose .mermaid-block")).toHaveCount(1);
 
   const line = await dirtyWithHeldSave(page);
-  // Left as null, which is what the panel answers when the user presses Cancel.
+  // `__savePanel` is left as null, which is what the panel answers when the user presses Cancel.
 
-  await runFromMenu(page, "export-pdf");
+  await openPreview(page);
+  await savePdf(page).click();
   await expect
     .poll(async () => (await commands(page)).filter((c) => c === "plugin:dialog|save").length, {
       timeout: EXPORTED,
@@ -340,4 +379,10 @@ test("cancelling the save panel leaves the document exactly where it was", async
   expect(await disk(page)).toBe(SOURCE);
   await expect(page.locator(".dirty-dot")).toBeVisible();
   await expect(toast(page)).toHaveCount(0);
+
+  // And the preview is still up, holding the bytes it already compiled. Cancelling the save panel
+  // is somebody deciding not to write this file yet, not somebody finished looking at it, so a
+  // second Save must not cost a second compile.
+  await expect(preview(page)).toBeVisible();
+  await expect(savePdf(page)).toBeEnabled();
 });

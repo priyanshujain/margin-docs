@@ -144,9 +144,13 @@ select {
   color: var(--ink);
 }
 
+/* On, or open. The two are the same picture on purpose: every one of these is a control whose
+   result is on this screen, so "this button is doing something right now" is the only distinction
+   worth drawing. The inset ring is what separates it from a hover, which shares the wash. */
 .icon-button[data-active="true"] {
   background: var(--accent-wash);
-  color: var(--ink);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
 }
 
 :root[data-touch] .icon-button {

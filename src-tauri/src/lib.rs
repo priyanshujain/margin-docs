@@ -297,6 +297,7 @@ pub fn run() {
             pdf::pdf_write,
             grammar::grammar_available,
             grammar::grammar_check,
+            fonts::fonts_list_system,
         ])
         .run(context)
         .expect("error while running Margin Docs");

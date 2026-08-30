@@ -1,5 +1,5 @@
-// The width control there was no way to click: a title bar button that shows the applied width and
-// opens the three named steps with the current one marked.
+// The width control there was no way to click: a title bar button that opens the three named steps
+// with the applied one ticked, and names it in its own tooltip.
 //
 // It belongs beside the theme toggle rather than in the editor pill. Everything in the pill edits
 // the file; this edits the app's view of it and touches no byte on disk, and the title bar already
@@ -21,24 +21,18 @@
 // the menu, and closing puts it back where it came from.
 
 import { useEffect, useId, useRef, useState } from "react";
+import { icons } from "margin-shared";
 import { useEscapeLayer } from "../escape";
 import { applyWidth, WIDTHS, type EditorWidth } from "../width";
 import { Icon } from "./Icon";
 
 const ITEM = ".width-menu-item";
 
-const CHECK_D = "M20 6L9 17l-5-5";
-
-/** The page's two edges with three lines of text between them, so the button says which width is
- * applied without spending a word of the title bar on it. The edges never move and only the
- * measure does, which is the whole of what the setting changes. The sibling's glyph for this is a
- * double headed arrow, and it is not ported: an arrow six units long is a smudge at 16px, which is
- * the only size this is ever drawn at. */
-const WIDTH_ICON: Record<EditorWidth, string> = {
-  narrow: "M3 4v16M21 4v16M9 7h6M9 12h6M9 17h6",
-  normal: "M3 4v16M21 4v16M7 7h10M7 12h10M7 17h10",
-  wide: "M3 4v16M21 4v16M5 7h14M5 12h14M5 17h14",
-};
+// Both glyphs are margin-shared's, so this control looks the same in the book app. The arrow does
+// not change with the applied width and deliberately does not: an earlier version drew three lines
+// of text at three measures so the button said which width was on, and the two apps then had
+// different pictures of the same control. The width is on the menu, ticked, one click away.
+const { CHECK: CHECK_D, WIDTH: WIDTH_ICON } = icons;
 
 function isWidth(value: string | null): value is EditorWidth {
   return WIDTHS.includes(value as EditorWidth);
@@ -146,7 +140,7 @@ export function WidthMenu() {
         onMouseDown={(e) => e.preventDefault()}
         onClick={toggle}
       >
-        <Icon d={WIDTH_ICON[width]} />
+        <Icon d={WIDTH_ICON} />
       </button>
       {open && (
         <>

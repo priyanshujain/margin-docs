@@ -6,7 +6,7 @@
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use margin_docs_lib::dto::ImageInput;
-use margin_docs_lib::pdf::compile;
+use margin_docs_lib::pdf::{compile, compile_in};
 use tempfile::TempDir;
 
 /// A real 4x4 PNG, so an image that is meant to be read is one Typst can actually decode, and one
@@ -313,4 +313,50 @@ fn every_weight_the_converter_asks_for_has_a_face_of_its_own() {
             assert_ne!(page(one), page(two), "{one} and {two} are the same face");
         }
     }
+}
+
+/// A document set in one of the four extra bundled families really is typeset in it.
+///
+/// The bytes are compiled into the binary but only loaded when the front end names the id, so the
+/// thing worth proving is that naming it changes the page: the same word in EB Garamond and in the
+/// default face has to be two different documents. A family Typst cannot see is not an error, it is
+/// a warning and a fallback, so the negative case would pass without the loading working at all.
+#[test]
+fn a_document_set_in_a_bundled_face_is_typeset_in_it() {
+    let (_dir, roots) = root();
+    let word = |family: &str, bundled: &[String]| {
+        let source = format!("{PREAMBLE}#text(font: \"{family}\")[Margin]\n");
+        compile_in(source, &[], &roots, bundled, &[]).expect("the face typesets").0
+    };
+
+    let default = word("Literata", &[]);
+    for (id, family) in [
+        ("eb-garamond", "EB Garamond"),
+        ("lora", "Lora"),
+        ("source-serif", "Source Serif 4"),
+        ("fraunces", "Fraunces"),
+    ] {
+        let chosen = word(family, &[id.to_string()]);
+        assert_ne!(default, chosen, "{family} came out as the default face");
+    }
+}
+
+/// A face the compiler cannot find costs a warning and never the export.
+///
+/// Both halves reach here in the ordinary run of things. A bundled id is a preference written by
+/// some other version of the app, and a system family is one the user has uninstalled since they
+/// chose it; neither is a reason to refuse somebody their PDF.
+#[test]
+fn a_face_that_is_not_there_still_exports() {
+    let (_dir, roots) = root();
+    let source = format!("{PREAMBLE}#text(font: \"Nothing Installed\")[Margin]\n");
+    let (bytes, _) = compile_in(
+        source,
+        &[],
+        &roots,
+        &["a-face-no-build-has".to_string()],
+        &["Nothing Installed".to_string()],
+    )
+    .expect("an unknown family falls back rather than failing");
+    assert!(bytes.starts_with(b"%PDF-"), "the export still happened");
 }

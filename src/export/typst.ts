@@ -23,6 +23,7 @@
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import type { ImageInput } from "../ipc";
 import { resolveRelative } from "../links";
+import { DEFAULT_FONTS, fontFamilyName, type DocumentFonts } from "../model/fonts";
 import { CALLOUT_LABELS, calloutKindFromLabel, type CalloutKind } from "../model/doc";
 
 export interface TypstDocument {
@@ -48,6 +49,10 @@ export type MathMode = "typeset" | "literal";
 export interface TypstOptions {
   diagrams?: Diagrams;
   math?: MathMode;
+  /** The two faces the document is set in, which default to what tokens.css sets an untouched one
+   * in. Only the body and heading slots follow the document: code and formulas are set in the
+   * machine's own faces either way, which is src-tauri/src/pdf.rs's business and not this one's. */
+  fonts?: DocumentFonts;
 }
 
 const MERMAID = "mermaid";
@@ -128,15 +133,20 @@ function flow(value: string): string {
 // chosen here, because an export is the document on screen and not a second design. The light
 // palette specifically: a PDF is a white page whatever `data-theme` says.
 //
-// Literata and Hanken Grotesk are the two families src-tauri/src/pdf.rs compiles into the binary,
-// so they are always there and can be named here. Monospace and the maths face are not named here
-// at all: neither is bundled, both come off the machine, and Typst warns once for every family it
-// was asked for and could not find, so a hopeful list written on this side would end every export
-// with a toast about fonts nobody chose. src-tauri/src/fonts.rs asks the system what it actually
-// has, and pdf.rs puts the answer in front of this preamble.
+// The body and heading faces are the document's own and arrive in `TypstOptions`, because a font
+// is a per-document setting here the way it is in src/store/useDocumentFonts.ts. Whichever family
+// they name, src-tauri/src/pdf.rs is handed its bytes before this preamble reaches the compiler.
+//
+// Monospace and the maths face are not named here at all: neither is bundled, both come off the
+// machine, and Typst warns once for every family it was asked for and could not find, so a hopeful
+// list written on this side would end every export with a toast about fonts nobody chose.
+// src-tauri/src/fonts.rs asks the system what it actually has, and pdf.rs puts the answer in front
+// of this preamble.
 // ------------------------------------------------------------------------------------------------
 
-const BODY_FONT = "Literata";
+// The app's own face, and the one face on the page that is not a document decision. prose.css does
+// not make it one either: the fifth and sixth heading levels are labels rather than headings, and
+// the sheet sets them in the UI family on screen whatever the document is set in.
 const UI_FONT = "Hanken Grotesk";
 
 // The light palette of src/styles/tokens.css, written out because Typst source cannot read a CSS
@@ -183,11 +193,13 @@ const CALLOUT_COLOURS: Record<CalloutKind, { edge: string; fill: string; label: 
  * with the backend, and a missing package is a hard compile error rather than a warning, so a
  * document with no maths in it is not made to depend on it.
  */
-function preamble(title: string, math: boolean): string {
+function preamble(title: string, math: boolean, fonts: DocumentFonts): string {
   const mitex = math ? `#import "/mitex/lib.typ": mitex, mi\n\n` : "";
+  const body = fontFamilyName(fonts.body);
+  const heading = fontFamilyName(fonts.heading);
   return `${mitex}#set document(title: ${str(title)})
 #set page(paper: "a4", margin: (x: 2.4cm, y: 2.6cm), numbering: "1", number-align: center)
-#set text(font: ${str(BODY_FONT)}, size: 11pt, fill: ${hex(INK)}, lang: "en")
+#set text(font: ${str(body)}, size: 11pt, fill: ${hex(INK)}, lang: "en")
 #set par(leading: 0.7em, spacing: 1.05em, justify: false)
 #set heading(numbering: none)
 
@@ -195,6 +207,7 @@ function preamble(title: string, math: boolean): string {
 // the reader stops seeing a hierarchy. Size for the first three, a weight step for the fourth, the
 // UI face for the last two, case for the sixth. prose.css's scale, in print units.
 #show heading: set block(above: 1.9em, below: 0.55em)
+#show heading: set text(font: ${str(heading)})
 #show heading.where(level: 1): set text(size: 1.77em, weight: 600, tracking: -0.016em)
 #show heading.where(level: 2): set text(size: 1.35em, weight: 600, tracking: -0.008em)
 #show heading.where(level: 3): set text(size: 1.12em, weight: 600)
@@ -766,7 +779,7 @@ export function documentToTypst(doc: ProseMirrorNode, path: string, options: Typ
   };
   const rendered = blocks(ctx, doc);
   return {
-    source: `${preamble(baseName(path), ctx.math)}\n${rendered}\n`,
+    source: `${preamble(baseName(path), ctx.math, options.fonts ?? DEFAULT_FONTS)}\n${rendered}\n`,
     images: ctx.images,
     warnings: ctx.warnings,
   };

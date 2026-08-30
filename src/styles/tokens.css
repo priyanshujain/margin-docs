@@ -1,92 +1,23 @@
+/* The palette, the type scale and the shape constants come from margin-shared, which is the one
+   copy of the values both apps have to agree on. Everything below is what only a document editor
+   needs: a six level heading scale, the rules and code surfaces a page of prose draws, and the
+   measures the sheet is laid out at. */
+@import "margin-shared/css/tokens.css";
+
+/* The handful of shape and scale tokens this app adds to the shared set. */
 :root {
-  --font-ui: "Hanken Grotesk", ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-book: "Literata", Georgia, "Times New Roman", serif;
-  --font-heading: "Literata", Georgia, "Times New Roman", serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
-
-  --r-sm: 5px;
-  --r-md: 8px;
-  --r-lg: 12px;
   --r-pill: 999px;
-
-  --pane-sidebar: 248px;
-  --measure: 46em;
-  --titlebar-h: 46px;
   --traffic-pad: 84px;
   --touch-h: 44px;
-
-  --t-1: 11px;
-  --t-2: 12px;
-  --t-3: 13px;
-  --t-4: 15px;
   --t-5: 16px;
-
-  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
-}
-
-:root,
-:root[data-theme="light"] {
-  --paper: #fcfbf7;
-  --shell: #f1ece2;
-  --sidebar: #ece6da;
-  --raised: #fbfaf6;
-
-  --ink: #23201b;
-  --ink-soft: #6b6458;
-  --ink-faint: #9b9484;
-
-  --line: #e3ddce;
-  --line-strong: #d6cfbd;
-
-  --accent: #2a2622;
-  --accent-ink: #100e0b;
-  --accent-wash: rgba(35, 32, 27, 0.08);
-  --accent-contrast: #faf7f0;
-  --selection: rgba(35, 32, 27, 0.14);
-  --glass: rgba(252, 251, 247, 0.86);
-
-  --danger: #b4453a;
-  --danger-ink: #963327;
-  --danger-wash: rgba(180, 69, 58, 0.1);
-  --danger-contrast: #faf7f0;
-
-  --shadow-page: 0 1px 2px rgba(35, 32, 27, 0.06), 0 14px 30px rgba(35, 32, 27, 0.09);
-  --shadow-pop: 0 8px 24px rgba(35, 32, 27, 0.14);
-  --shadow-raised: 0 1px 2px rgba(35, 32, 27, 0.05);
-
   --scrim: rgba(35, 32, 27, 0.28);
+  --shadow-raised: 0 1px 2px rgba(35, 32, 27, 0.05);
 }
 
 :root[data-theme="dark"] {
-  --paper: #1d1a16;
-  --shell: #151310;
-  --sidebar: #1a1713;
-  --raised: #232019;
-
-  --ink: #ece6da;
-  --ink-soft: #a89f8e;
-  --ink-faint: #756d5e;
-
-  --line: #2c2823;
-  --line-strong: #3a352d;
-
-  --accent: #efe9dc;
-  --accent-ink: #ffffff;
-  --accent-wash: rgba(239, 233, 220, 0.12);
-  --accent-contrast: #1a1714;
-  --selection: rgba(239, 233, 220, 0.18);
-  --glass: rgba(33, 30, 25, 0.88);
-
-  --danger: #d97a6f;
-  --danger-ink: #e58e84;
-  --danger-wash: rgba(217, 122, 111, 0.16);
-  --danger-contrast: #1a1714;
-
-  --shadow-page: 0 1px 2px rgba(0, 0, 0, 0.4), 0 14px 34px rgba(0, 0, 0, 0.5);
-  --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.55);
-  --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.35);
-
   --scrim: rgba(0, 0, 0, 0.5);
+  --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.35);
 }
 
 /* Document typography, added for the editor surface. The four step scale above sizes chrome and

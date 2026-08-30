@@ -11,7 +11,9 @@
     "tauri": "tauri",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:ui": "playwright test"
+    "test:ui": "playwright test",
+    "fonts:sync": "node node_modules/margin-shared/bin/sync-fonts.mjs .",
+    "fonts:check": "node node_modules/margin-shared/bin/sync-fonts.mjs . --check"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -28,8 +30,10 @@
     "highlight.js": "^11.12.0",
     "katex": "^0.18.4",
     "lowlight": "^3.3.0",
+    "margin-shared": "file:../../python/margin/shared",
     "mdast-util-to-markdown": "^2",
     "mermaid": "^11.17.1",
+    "pdfjs-dist": "^6.2.108",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "remark-frontmatter": "^5",

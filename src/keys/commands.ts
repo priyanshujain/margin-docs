@@ -13,7 +13,7 @@
 
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { runWritingTool } from "../editor/writing";
-import { exportPdf } from "../export/run";
+import { canExport } from "../export/run";
 import { checkForUpdates } from "../update";
 import { useDocument } from "../store/useDocument";
 import { useProofing } from "../store/useProofing";
@@ -248,7 +248,16 @@ const TABLE: Record<CommandId, Omit<Command, "id">> = {
   "new-folder": { label: "New Folder", palette: true, run: () => void createFolder() },
   "close-folder": { label: "Close Folder", palette: false, run: closeActiveFolder },
   save: { label: "Save", palette: true, run: () => void saveDocument() },
-  "export-pdf": { label: "Export as PDF…", palette: true, run: () => void exportPdf() },
+  // Dispatched rather than run, because what Export produces first is a panel: the pages go on
+  // screen and the save panel is a button on that panel. The guard stays here, because a preview
+  // that opens onto "no document open" is a worse answer than one that never opens.
+  "export-pdf": {
+    label: "Export as PDF…",
+    palette: true,
+    run: () => {
+      if (canExport()) dispatch("export-pdf");
+    },
+  },
   "rename-file": { label: "Rename", palette: false, run: () => void renameSelected() },
   "duplicate-file": { label: "Duplicate", palette: false, run: () => void duplicateSelected() },
   "delete-file": { label: "Delete", palette: false, run: () => void deleteSelected() },

@@ -1,12 +1,14 @@
-<svg width="350" height="350" viewBox="0 0 350 350" fill="none" xmlns="http://www.w3.org/2000/svg">
-<!-- Margin Docs mark: a page with a margin rule. Glyph only, matching margin's logo-dark.svg conventions.
-     App icon composition on a 512 canvas: squircle rect x=49 y=49 w=414 h=414 rx=92.5 fill #0d0c0a,
-     then this glyph under transform="translate(56,48) scale(1.142857142857)".
-     That scale puts every stroke centreline on a pixel centre at 32x32, and lifts the glyph 8px
-     above the geometric centre for optical balance. -->
-<rect x="70" y="35" width="210" height="280" rx="14" stroke="#fcfbf7" stroke-width="10"/>
-<rect x="93" y="72" width="10" height="206" rx="5" fill="#fcfbf7"/>
-<rect x="135" y="100" width="122" height="10" rx="5" fill="#fcfbf7"/>
-<rect x="135" y="170" width="122" height="10" rx="5" fill="#fcfbf7"/>
-<rect x="135" y="240" width="80" height="10" rx="5" fill="#fcfbf7"/>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+<!-- Margin Docs mark: stacked text bars, a paragraph seen as an alignment glyph. Source of truth
+     for every file in this directory; regenerate them with `pnpm tauri icon` after editing.
+     Squircle 828 wide on a 1024 canvas is the macOS icon inset, and every coordinate is a multiple
+     of 32 so bars and gaps land on whole pixels at 32x32. The block spans y 224..768 against a
+     centre of 512, which lifts it 16 above the geometric centre for optical balance. -->
+<rect x="98" y="98" width="828" height="828" rx="185" fill="#0d0c0a"/>
+<g fill="#fcfbf7">
+<rect x="224" y="224" width="576" height="64" rx="32"/>
+<rect x="224" y="384" width="416" height="64" rx="32"/>
+<rect x="224" y="544" width="576" height="64" rx="32"/>
+<rect x="224" y="704" width="288" height="64" rx="32"/>
+</g>
 </svg>

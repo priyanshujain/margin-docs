@@ -1,0 +1,142 @@
+/* The Document setup panel, opened by the filename in the title bar.
+ *
+ * It borrows .overlay, .panel, .panel-head, .panel-body and .panel-foot from app.css and the two
+ * buttons from tree.css, for the same reason src/styles/settings.css does: a dialog that looked
+ * like its own app would be the only thing on screen that did. What is here is the labelled field
+ * and the typography section, both ported from the sibling book app's Book setup so that the two
+ * panels are the same object rather than two designs of one idea. */
+
+.panel-setup {
+  width: min(520px, calc(100vw - 32px));
+}
+
+/* A label over its control, which is the shape every field in this panel has. The settings panel
+   next door puts its label beside a switch instead, because a switch is an answer and these are
+   values. */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field-label {
+  font-family: var(--font-ui);
+  font-size: var(--t-1);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.field input,
+.field select {
+  font-family: var(--font-ui);
+  font-size: var(--t-4);
+  color: var(--ink);
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  padding: 9px 11px;
+}
+
+.field input:focus,
+.field select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* A select showing a font is set in that font, which is the point of the control. The rule above
+   would otherwise put the UI face on it and every option would read the same. */
+.field select {
+  font-family: inherit;
+}
+
+.font-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* A specimen with its name under it, rather than a row of five names. Pairing two faces is the part
+   of this that takes an eye, and five words set in one face say nothing about what any of them
+   looks like. */
+.font-preset {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 9px 12px;
+  min-width: 70px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--raised);
+  transition: border-color 120ms var(--ease), box-shadow 120ms var(--ease);
+}
+
+.font-preset:hover {
+  border-color: var(--ink-faint);
+}
+
+.font-preset[data-on="true"] {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.font-preset-demo {
+  font-size: 23px;
+  line-height: 1;
+  color: var(--ink);
+}
+
+.font-preset-name {
+  font-family: var(--font-ui);
+  font-size: var(--t-1);
+  color: var(--ink-soft);
+}
+
+/* The way down to the two selects, and a link rather than a button because what it does is reveal
+   rather than change. Nothing in the panel moves when it is pressed except what appears below it. */
+.font-advanced {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 0;
+  font-family: var(--font-ui);
+  font-size: var(--t-2);
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.font-note {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--t-1);
+  line-height: 1.5;
+  color: var(--ink-faint);
+}
+
+/* What the page will look like, since the page itself does not change until Save. A heading and a
+   line of prose, which is the smallest sample that shows both slots and the relation between
+   them. On --paper rather than --raised, because that is what a document sits on. */
+.font-sample {
+  padding: 15px 17px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.font-sample-title {
+  display: block;
+  font-size: 21px;
+  font-weight: 500;
+  line-height: 1.2;
+  margin-bottom: 6px;
+}
+
+/* The title bar's own button, which is now a way into this panel and says so while it is open. */
+.titlebar .doc-title[data-active="true"] {
+  color: var(--ink);
+}

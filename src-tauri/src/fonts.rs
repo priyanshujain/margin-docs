@@ -141,3 +141,42 @@ fn collect_installed(
         .map(|family| (*family).to_string())
         .collect()
 }
+
+// ------------------------------------------------------------------------------------------------
+// The document's own face
+//
+// Everything above is about the two families the bundle is missing. What follows is about the one
+// the author chose: src/model/fonts.ts offers six bundled families and whatever this machine has,
+// and an export has to be handed the bytes of whichever it names.
+// ------------------------------------------------------------------------------------------------
+
+/// Every family this machine has, for the "System" group of the font picker.
+///
+/// Sorted and deduplicated here rather than in the UI, because a font book has one entry per face
+/// and the picker wants one per family: a machine with the full Helvetica Neue family would
+/// otherwise show it nine times.
+#[tauri::command(async)]
+pub fn fonts_list_system() -> Vec<String> {
+    let db = system_db();
+    let mut names: Vec<String> = db
+        .faces()
+        .filter_map(|face| face.families.first().map(|(name, _)| name.clone()))
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// The upright and italic cuts of one installed family, for a document set in a face off the
+/// machine.
+///
+/// Four queries and not two, because a family whose bold is a separate file gives fontdb a
+/// different id for it and the collection has to be loaded either way. `seen` is what stops a `.ttc`
+/// holding all four from being read four times.
+pub fn system_faces(family: &str) -> Vec<Vec<u8>> {
+    let db = system_db();
+    let mut fonts = Vec::new();
+    let mut seen = HashSet::new();
+    faces_for(&db, family, &mut fonts, &mut seen);
+    fonts
+}
