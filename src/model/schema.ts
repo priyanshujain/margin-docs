@@ -1,5 +1,6 @@
 import { Schema } from "@tiptap/pm/model";
 import type { AttributeSpec, Attrs, MarkSpec, Node as ProseMirrorNode, NodeSpec } from "@tiptap/pm/model";
+import { isDocumentColor } from "./colors";
 
 // This schema is the contract between the markdown bridge and the editor. The bridge may only
 // produce nodes declared here, and the serializer must be able to write every one of them back to
@@ -36,7 +37,7 @@ export type NodeName =
   | "mathBlock"
   | "raw";
 
-export type MarkName = "link" | "strong" | "em" | "strikethrough" | "code";
+export type MarkName = "link" | "strong" | "em" | "strikethrough" | "code" | "textColor" | "highlight";
 
 function validateColwidth(value: unknown): void {
   if (value === null) return;
@@ -192,9 +193,19 @@ export const nodes: { [name in NodeName]: NodeSpec } = {
   // Task items are allowed in the plain lists as well as in taskList, because GFM lets a single
   // list mix "- [ ] done" items with ordinary ones. The bridge emits taskList only when every item
   // carries a checkbox; a mixed list is a bulletList or orderedList holding both kinds of item.
+  //
+  // The three lists are in a second group, and it is the one place a group here is read by
+  // something other than a content expression. TipTap decides whether a node is a list by looking
+  // for the word in this field and nothing else, so with `block` alone `toggleList` never found the
+  // list the caret was in: it fell through to the branch that wraps a new one, and the second press
+  // of the Bulleted list tool, which is the documented way back to a paragraph, lifted the item out
+  // and put it straight back. The tool did nothing and stayed lit over a list it could not take
+  // off, and Mod-Shift-7, 8 and 9 in src/editor/shortcuts.ts did nothing for the same reason.
+  // Adding a group takes nothing away: every content expression in this file asks for `block` and
+  // still gets these three, and no node here is called `list` for the name to collide with.
   bulletList: {
     content: "(listItem | taskItem)+",
-    group: "block",
+    group: "block list",
     attrs: { tight: { default: true, validate: "boolean" } },
     parseDOM: [{ tag: "ul", getAttrs: (dom) => ({ tight: !dom.hasAttribute("data-loose") }) }],
     toDOM: (node) => ["ul", { "data-loose": node.attrs.tight ? null : "" }, 0],
@@ -202,7 +213,7 @@ export const nodes: { [name in NodeName]: NodeSpec } = {
 
   orderedList: {
     content: "(listItem | taskItem)+",
-    group: "block",
+    group: "block list",
     attrs: {
       start: { default: 1, validate: "number" },
       tight: { default: true, validate: "boolean" },
@@ -235,7 +246,7 @@ export const nodes: { [name in NodeName]: NodeSpec } = {
 
   taskList: {
     content: "taskItem+",
-    group: "block",
+    group: "block list",
     attrs: { tight: { default: true, validate: "boolean" } },
     parseDOM: [
       {
@@ -476,6 +487,53 @@ export const marks: { [name in MarkName]: MarkSpec } = {
     code: true,
     parseDOM: [{ tag: "code" }],
     toDOM: () => ["code", 0],
+  },
+
+  // Markdown has no colour, so these two are spelled as the inline html src/markdown writes and
+  // reads back: `<span style="color: #rrggbb">` and `<mark style="background-color: #rrggbb">`,
+  // and nothing else. The attribute is the hex out of the file, which is why the style is built
+  // here from the attribute rather than the attribute being inferred from a style the app found
+  // somewhere: the file decides what colour this is and the DOM is only where it is drawn.
+  //
+  // The data attribute is what makes both of these survive being read back out of the editor's own
+  // DOM, which is the same reason the link mark carries `data-run`: prosemirror-view re-parses the
+  // surface after some input, and a rule matching on the style attribute would have to re-read a
+  // string the browser has already normalised (`color: rgb(196, 69, 58)` on the way back out), so
+  // the colour is put somewhere the browser has no opinion about. A rule that finds no six digit
+  // hex there refuses the element outright rather than inventing a default, because a colour mark
+  // with no colour is a mark with nothing to say and one the serializer would have to drop.
+  textColor: {
+    attrs: { color: { default: null, validate: "string|null" } },
+    parseDOM: [
+      {
+        tag: "span[data-text-color]",
+        getAttrs: (dom) => {
+          const color = dom.getAttribute("data-text-color");
+          return isDocumentColor(color) ? { color } : false;
+        },
+      },
+    ],
+    toDOM: (mark) =>
+      isDocumentColor(mark.attrs.color)
+        ? ["span", { style: `color: ${mark.attrs.color}`, "data-text-color": mark.attrs.color }, 0]
+        : ["span", {}, 0],
+  },
+
+  highlight: {
+    attrs: { color: { default: null, validate: "string|null" } },
+    parseDOM: [
+      {
+        tag: "mark[data-highlight]",
+        getAttrs: (dom) => {
+          const color = dom.getAttribute("data-highlight");
+          return isDocumentColor(color) ? { color } : false;
+        },
+      },
+    ],
+    toDOM: (mark) =>
+      isDocumentColor(mark.attrs.color)
+        ? ["mark", { style: `background-color: ${mark.attrs.color}`, "data-highlight": mark.attrs.color }, 0]
+        : ["mark", {}, 0],
   },
 };
 

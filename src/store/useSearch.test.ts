@@ -61,13 +61,16 @@ const hit = (name: string): QuickOpenHit => ({
 beforeEach(() => {
   for (const mock of Object.values(index)) mock.mockReset();
   useWorkspace.setState({
-    roots: [{ id: "handbook", path: HANDBOOK, name: "Handbook", tree: [] }],
+    root: { id: "handbook", path: HANDBOOK, name: "Handbook", tree: [] },
   });
   useSearch.getState().reset();
 });
 
 describe("quick open", () => {
-  it("names the folder a hit came from and keeps the ranges that highlight it", async () => {
+  // Rewritten from "names the folder a hit came from": one folder is open at a time now, so the
+  // hit's root id has nothing left to name and the store stopped resolving it to a path. What is
+  // left to keep honest is the relative path the row is drawn from and the ranges over it.
+  it("keeps the relative path and the ranges that highlight it", async () => {
     index.searchQuickOpen.mockResolvedValue([hit("README.md")]);
 
     await useSearch.getState().runQuickOpen("re");
@@ -76,7 +79,6 @@ describe("quick open", () => {
       {
         path: `${HANDBOOK}/README.md`,
         name: "README.md",
-        rootPath: HANDBOOK,
         relPath: "README.md",
         ranges: [{ start: 0, end: 2 }],
       },

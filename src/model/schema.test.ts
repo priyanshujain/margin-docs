@@ -33,7 +33,10 @@ const EXPECTED_NODES: NodeName[] = [
   "raw",
 ];
 
-const EXPECTED_MARKS: MarkName[] = ["link", "strong", "em", "strikethrough", "code"];
+// textColor and highlight joined the contract with colour. The list is rewritten rather than
+// relaxed: what it is here to catch is a mark appearing or disappearing without somebody deciding
+// to, and it can only do that while it is exact.
+const EXPECTED_MARKS: MarkName[] = ["link", "strong", "em", "strikethrough", "code", "textColor", "highlight"];
 
 const n = schema.nodes;
 const m = schema.marks;
@@ -48,6 +51,8 @@ function kitchenSink(): ProseMirrorNode {
       schema.text("span", [m.code.create()]),
       schema.text("link", [m.link.create({ href: "./other.md", title: "Other" })]),
       schema.text("slanted", [m.em.create()]),
+      schema.text("coloured", [m.textColor.create({ color: "#c4453a" })]),
+      schema.text("lit", [m.highlight.create({ color: "#977927" })]),
       n.hardBreak.createChecked(),
       n.image.createChecked({ src: "assets/shot.png", alt: "A shot", title: null }),
       n.mathInline.createChecked({ latex: "x^2" }),

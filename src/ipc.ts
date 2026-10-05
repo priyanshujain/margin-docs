@@ -51,6 +51,9 @@ export const INDEX_PROGRESS_EVENT = "index-progress";
 /** The `pdf-warnings` event, whose payload is a `PdfWarning[]`. */
 export const PDF_WARNINGS_EVENT = "pdf-warnings";
 
+/** The `window-request` event, whose payload is a `WindowRequest`. Sent to one window only. */
+export const WINDOW_REQUEST_EVENT = "window-request";
+
 export type MenuAction =
   | "open-folder"
   | "new-doc"
@@ -68,6 +71,16 @@ export type MenuAction =
   | "export-pdf"
   | "writing-proofread"
   | "writing-rewrite";
+
+/**
+ * What a window was opened to show: a Markdown file on its own, a folder, or a menu action that
+ * arrived while no window was open to run it.
+ */
+export interface WindowRequest {
+  document?: string | null;
+  folder?: string | null;
+  action?: string | null;
+}
 
 /**
  * One open folder. `id` is derived from the path, so it survives a relaunch and a root can be
@@ -92,9 +105,12 @@ export interface FileNode {
   name: string;
   kind: FileKind;
   /**
-   * True for markdown and .txt, the two kinds that open in the editor. A directory is not editable
-   * either, so the greyed row in the tree is `kind === "other"` and not `!editable`. A greyed row
-   * opens in the system default app.
+   * True for markdown and .txt, the two kinds that open in the editor and are written back.
+   *
+   * It is not the same question as whether a row is greyed, and has not been since pictures and
+   * PDFs started opening in a viewer of their own: those are not editable and are not foreign
+   * either. What is greyed is what `openKindForPath` in src/model/doc.ts has no answer for, which is
+   * the only row a click still hands to the system default app.
    */
   editable: boolean;
   modifiedMs: number;

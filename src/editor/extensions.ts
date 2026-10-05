@@ -28,6 +28,7 @@ import { marks as markSpecs, nodes as nodeSpecs } from "../model/schema";
 import type { MarkName, NodeName } from "../model/schema";
 import { BLOCK_EXTENSIONS } from "./blocks";
 import { LinkPicker } from "./linkPicker";
+import { imageView } from "./images";
 import { createPaste, type PasteContext } from "./paste";
 import { Proofing } from "./proofing";
 import { SearchHighlight } from "./search";
@@ -82,6 +83,8 @@ function nodeExtension(name: NodeName) {
   const { parseDOM, toDOM } = spec;
   if (parseDOM) config.parseHTML = () => parseDOM;
   if (toDOM) config.renderHTML = ({ node }) => toDOM(node);
+  // A local picture is read from beside the document, which a bare `src` in a webview is not.
+  if (name === "image") config.addNodeView = () => ({ node }) => imageView(node);
 
   return Node.create(config);
 }
@@ -150,10 +153,56 @@ export function createEditorExtensions(context: PasteContext): Extensions {
     ...MARK_NAMES.map(markExtension),
     SchemaExtras,
 
+    // What an empty block says it is waiting for.
+    //
+    // `includeChildren` is what makes this more than one prompt on one node. Left off, the plugin
+    // never looks past the document's own children, so the words appeared in an empty top level
+    // paragraph and in nothing else: not in a list item, not in a table cell, not in the first
+    // paragraph of a callout somebody had just made, not in a toggle nobody had typed into yet. It
+    // does not put more of them on screen at once, because `showOnlyCurrent` is on and only the
+    // block holding the caret is ever decorated; what it changes is which blocks can be that one.
+    //
+    // The text is a function of the node, and only of the node, because that is all the plugin can
+    // truthfully be asked. It computes the decoration inside a state field's apply, where the
+    // document it is describing is the transaction's and `editor.state` is still the one before it,
+    // so a position resolved against the editor here is resolved against the wrong document exactly
+    // when the block is new: press Enter for a second list item and the paragraph the prompt is for
+    // does not exist in the document this callback can see. A heading knows its own level and a
+    // fence knows its own language, so those two are answered here. Whether a paragraph is a list
+    // item's line, a cell, or a quote is a fact about its parent, and prose.css answers that with a
+    // descendant selector, which cannot be wrong about ancestry and costs nothing.
+    //
+    // A fence used to be silenced here rather than answered, and that was a workaround for where
+    // the words landed rather than for what they said: `data-placeholder` goes on the empty node's
+    // element, which for a code block is the `<pre>`, and the fence keeps its padding on the
+    // `<code>` inside, so the prompt floated onto the top left corner of the box, over the border,
+    // 12.6px above and 15.4px left of the caret, in the document's 17px serif rather than the
+    // fence's 14px mono. prose.css places it against the `<code>`'s content box now, and the label
+    // it used to collide with has moved off `::before`. `graph TD` for a diagram, since an empty
+    // ```mermaid fence is the one block in this editor that gives no clue at all what goes in it.
+    //
+    // Not AppFlowy's paragraph prompt, which reads "Enter a / to insert a block, or start typing".
+    // There is no slash menu here and there is not going to be one, per docs/design.md.
+    //
+    // Both class options are set empty rather than left out. Their defaults are `is-empty` and
+    // `is-editor-empty`, and an `is-` class is what the CSS conventions say state is never spelled
+    // as; the names that were here instead were spelled the house way and then never used by any
+    // stylesheet, which is worse than either. The attribute is the whole contract.
     Placeholder.configure({
-      emptyEditorClass: "editor-empty",
-      emptyNodeClass: "block-empty",
-      placeholder: ({ node }) => (node.type.name === "heading" ? "" : "Start writing…"),
+      emptyEditorClass: "",
+      emptyNodeClass: "",
+      includeChildren: true,
+      placeholder: ({ node }) => {
+        if (node.type.name === "heading") return `Heading ${node.attrs.level}`;
+        if (node.type.name === "codeBlock") {
+          return node.attrs.language === "mermaid" ? "graph TD" : "Start writing…";
+        }
+        // A raw block is somebody's source bytes held verbatim, and an empty one is a fence with
+        // nothing between its markers. Prompting there would be this editor offering to write into
+        // the one construct it has said it cannot model.
+        if (node.type.name === "raw") return "";
+        return "Start writing…";
+      },
     }),
 
     SearchHighlight,

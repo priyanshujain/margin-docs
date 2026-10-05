@@ -6,12 +6,13 @@
 // thing in three different ways.
 //
 // A command whose result is a panel on screen (quick open, find, find in files, the command
-// palette, settings, the shortcuts sheet) does not own a visibility flag here: nothing in this
-// module renders anything. Whichever component ends up drawing that panel subscribes with
-// `onCommand`, so the panel existing is not a precondition for this table to compile and dispatch
-// correctly.
+// palette, settings, the shortcuts sheet, the setup panel New Document opens) does not own a
+// visibility flag here: nothing in this module renders anything. Whichever component ends up
+// drawing that panel subscribes with `onCommand`, so the panel existing is not a precondition for
+// this table to compile and dispatch correctly.
 
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { cliInstall, defaultAppSet } from "../api/windows";
 import { runWritingTool } from "../editor/writing";
 import { canExport } from "../export/run";
 import { checkForUpdates } from "../update";
@@ -19,7 +20,9 @@ import { useDocument } from "../store/useDocument";
 import { useProofing } from "../store/useProofing";
 import { useTheme } from "../store/useTheme";
 import { notify } from "../store/useToast";
+import { useWindow } from "../store/useWindow";
 import { useWorkspace, type TreeNode } from "../store/useWorkspace";
+import { claimDocument, leaveDocument, openFolderInNewWindow } from "../windows";
 
 const ISSUES_URL = "https://github.com/priyanshujain/margin-docs/issues";
 
@@ -39,12 +42,17 @@ export type CommandId =
   | "find-in-files"
   | "command-palette"
   | "toggle-sidebar"
+  | "toggle-outline"
   | "toggle-theme"
   | "previous-document"
   | "next-document"
+  | "insert-link"
+  | "underline-unsupported"
+  | "editor-width-tight"
   | "editor-width-narrow"
   | "editor-width-normal"
   | "editor-width-wide"
+  | "editor-width-full"
   | "toggle-spelling"
   | "toggle-grammar"
   | "correct-spelling"
@@ -53,7 +61,9 @@ export type CommandId =
   | "shortcuts"
   | "settings"
   | "check-updates"
-  | "report-issue";
+  | "report-issue"
+  | "install-cli"
+  | "make-default-app";
 
 export interface Command {
   id: CommandId;
@@ -80,18 +90,20 @@ function findNode(nodes: readonly TreeNode[], path: string): TreeNode | null {
 }
 
 /**
- * A folder to create into: the selection itself if it is one, its parent if it is a file, the one
- * open root if nothing is selected and there is only one to guess at.
+ * A folder to create into: the selection itself if it is one, its parent if it is a file, and the
+ * open folder when nothing is selected. Null only when no folder is open at all.
+ *
+ * Exported because New Document is a panel now rather than a file appearing in the tree, and the
+ * panel has to be told where the file it is about to write will land.
  */
-function targetDir(): string | null {
-  const { roots, selectedPath } = workspace();
+export function targetDir(): string | null {
+  const { root, selectedPath } = workspace();
+  if (root === null) return null;
   if (selectedPath) {
-    for (const root of roots) {
-      const node = findNode(root.tree, selectedPath);
-      if (node) return node.isDir ? node.path : node.path.slice(0, node.path.lastIndexOf("/"));
-    }
+    const node = findNode(root.tree, selectedPath);
+    if (node) return node.isDir ? node.path : node.path.slice(0, node.path.lastIndexOf("/"));
   }
-  return roots.length === 1 ? roots[0].path : null;
+  return root.path;
 }
 
 function requireSelection(): string | null {
@@ -105,24 +117,26 @@ function requireSelection(): string | null {
 
 async function openFolder(): Promise<void> {
   try {
-    await workspace().openFolder();
+    // A standalone document keeps its window, so the folder gets one of its own.
+    if (useWindow.getState().standalone) await openFolderInNewWindow();
+    else await workspace().openFolder();
   } catch (e) {
     notify(`Could not open folder: ${String(e)}`);
   }
 }
 
-async function createDocument(): Promise<void> {
-  const dir = targetDir();
-  if (!dir) {
+/**
+ * Dispatched rather than run, because what New Document produces first is the setup panel: the
+ * name and the faces are chosen there and the file is written when Save is pressed. Same shape as
+ * Export below, and the guard stays here for the same reason, since a panel that opens onto
+ * nowhere to put the file is a worse answer than one that never opens.
+ */
+function createDocument(): void {
+  if (targetDir() === null) {
     notify("Open a folder first");
     return;
   }
-  try {
-    const path = await workspace().newDocument(dir);
-    await doc().open(path);
-  } catch (e) {
-    notify(`Could not create the document: ${String(e)}`);
-  }
+  dispatch("new-doc");
 }
 
 async function createFolder(): Promise<void> {
@@ -138,21 +152,21 @@ async function createFolder(): Promise<void> {
   }
 }
 
+/** For the panels that only ever search a folder. */
+function dispatchInFolder(id: CommandId): void {
+  if (workspace().root === null) {
+    notify("Open a folder first");
+    return;
+  }
+  dispatch(id);
+}
+
 function closeActiveFolder(): void {
-  const { roots, selectedPath } = workspace();
-  if (roots.length === 0) {
+  if (workspace().root === null) {
     notify("No folder is open");
     return;
   }
-  const owner = selectedPath
-    ? roots.find((r) => selectedPath === r.path || selectedPath.startsWith(`${r.path}/`))
-    : undefined;
-  const target = owner?.path ?? (roots.length === 1 ? roots[0].path : null);
-  if (!target) {
-    notify("Select which folder to close");
-    return;
-  }
-  workspace().closeFolder(target);
+  workspace().closeFolder();
 }
 
 async function saveDocument(): Promise<void> {
@@ -206,9 +220,17 @@ async function revealSelected(): Promise<void> {
   }
 }
 
+/** The history entry `step` away, if this window can switch to it. */
+async function canWalk(step: number): Promise<boolean> {
+  const { history, historyIndex } = doc();
+  const next = history[historyIndex + step];
+  if (next === undefined) return false;
+  return (await leaveDocument(next)) && (await claimDocument(next));
+}
+
 async function goBack(): Promise<void> {
   try {
-    await doc().back();
+    if (await canWalk(-1)) await doc().back();
   } catch (e) {
     notify(`Could not go back: ${String(e)}`);
   }
@@ -216,9 +238,18 @@ async function goBack(): Promise<void> {
 
 async function goForward(): Promise<void> {
   try {
-    await doc().forward();
+    if (await canWalk(1)) await doc().forward();
   } catch (e) {
     notify(`Could not go forward: ${String(e)}`);
+  }
+}
+
+/** Both answer with a sentence for any outcome the user should hear about, cancelling included. */
+async function reportIntegration(run: () => Promise<string>, failed: string): Promise<void> {
+  try {
+    notify(await run());
+  } catch (e) {
+    notify(`${failed}: ${String(e)}`);
   }
 }
 
@@ -244,7 +275,7 @@ function dispatch(id: CommandId): void {
 
 const TABLE: Record<CommandId, Omit<Command, "id">> = {
   "open-folder": { label: "Open Folder…", palette: true, run: () => void openFolder() },
-  "new-doc": { label: "New Document", palette: true, run: () => void createDocument() },
+  "new-doc": { label: "New Document", palette: true, run: createDocument },
   "new-folder": { label: "New Folder", palette: true, run: () => void createFolder() },
   "close-folder": { label: "Close Folder", palette: false, run: closeActiveFolder },
   save: { label: "Save", palette: true, run: () => void saveDocument() },
@@ -267,12 +298,12 @@ const TABLE: Record<CommandId, Omit<Command, "id">> = {
     run: () => void revealSelected(),
   },
 
-  "quick-open": { label: "Quick Open…", palette: true, run: () => dispatch("quick-open") },
+  "quick-open": { label: "Quick Open…", palette: true, run: () => dispatchInFolder("quick-open") },
   find: { label: "Find…", palette: true, run: () => dispatch("find") },
   "find-in-files": {
     label: "Find in Files…",
     palette: true,
-    run: () => dispatch("find-in-files"),
+    run: () => dispatchInFolder("find-in-files"),
   },
   "command-palette": {
     label: "Command Palette…",
@@ -285,11 +316,47 @@ const TABLE: Record<CommandId, Omit<Command, "id">> = {
     palette: true,
     run: () => dispatch("toggle-sidebar"),
   },
+  // The headings list under the tree, which src/components/Outline.tsx draws and is subscribed
+  // to. Dispatched for the same reason the sidebar is: the flag is the panel's own.
+  "toggle-outline": {
+    label: "Toggle Outline",
+    palette: true,
+    run: () => dispatch("toggle-outline"),
+  },
   "toggle-theme": { label: "Toggle Theme", palette: true, run: () => useTheme.getState().toggle() },
 
   "previous-document": { label: "Previous Document", palette: false, run: () => void goBack() },
   "next-document": { label: "Next Document", palette: false, run: () => void goForward() },
 
+  // The one thing the formatting pill does that is also a command, and it is here because it needs
+  // a chord: Cmd+K is what a Google Docs user presses for a link, and a chord this table does not
+  // own is a chord that has to be fished out of a window listener, which is what src/editor/
+  // Toolbar.tsx was doing before this row existed. Bold, italic and the headings stay TipTap's
+  // own, since nothing outside the editor ever has to reach them.
+  //
+  // Not in the palette. Its target is the selection, which is a thing the palette cannot show a
+  // row about, and one formatting entry in a list of application commands would read as the other
+  // ten being missing rather than as the only one that has a command id.
+  "insert-link": { label: "Insert Link…", palette: false, run: () => dispatch("insert-link") },
+
+  // Cmd+U, answered rather than left alone. Markdown has no underline, so there is nothing to
+  // toggle and nothing this app is willing to approximate it with, and conventions.md's rule for
+  // an edit with no spelling is that it is declined out loud. Leaving the chord unbound would not
+  // be leaving it alone either: the document is contenteditable, and WebKit's own answer to Cmd+U
+  // is to wrap the selection in a `<u>` the schema cannot hold and the writer would drop on the
+  // next save. Taking the key is how that is prevented, so this row is a refusal and a guard at
+  // once.
+  "underline-unsupported": {
+    label: "Underline (markdown has none)",
+    palette: false,
+    run: () => notify("Markdown has no underline. Bold or italic is as close as it spells."),
+  },
+
+  "editor-width-tight": {
+    label: "Tight Editor Width",
+    palette: true,
+    run: () => dispatch("editor-width-tight"),
+  },
   "editor-width-narrow": {
     label: "Narrow Editor Width",
     palette: true,
@@ -304,6 +371,11 @@ const TABLE: Record<CommandId, Omit<Command, "id">> = {
     label: "Wide Editor Width",
     palette: true,
     run: () => dispatch("editor-width-wide"),
+  },
+  "editor-width-full": {
+    label: "Full Editor Width",
+    palette: true,
+    run: () => dispatch("editor-width-full"),
   },
 
   // Not dispatched: there is no panel to open and no component that has to be listening, so this
@@ -364,6 +436,17 @@ const TABLE: Record<CommandId, Omit<Command, "id">> = {
     run: () => {
       openUrl(ISSUES_URL).catch(() => notify("Could not open the browser"));
     },
+  },
+  "install-cli": {
+    label: "Install ‘mdocs’ Command in PATH",
+    palette: true,
+    run: () => void reportIntegration(cliInstall, "Could not install mdocs"),
+  },
+  "make-default-app": {
+    label: "Make Margin Docs the Default Markdown App",
+    palette: true,
+    run: () =>
+      void reportIntegration(defaultAppSet, "Could not make Margin Docs the default"),
   },
 };
 

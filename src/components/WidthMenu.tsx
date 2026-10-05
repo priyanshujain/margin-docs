@@ -1,10 +1,13 @@
-// The width control there was no way to click: a title bar button that opens the three named steps
+// The width control there was no way to click: a title bar button that opens the five named steps
 // with the applied one ticked, and names it in its own tooltip.
 //
-// It belongs beside the theme toggle rather than in the editor pill. Everything in the pill edits
-// the file; this edits the app's view of it and touches no byte on disk, and the title bar already
-// holds the other two of exactly that kind, the sidebar and the theme, both persisted under the
-// same `margindocs-` prefix and both restored by the same boot script. The pill is also the wrong
+// It belongs in the title bar rather than in the editor pill. Everything in the pill edits the
+// file; this edits the app's view of it and touches no byte on disk, and the sidebar toggle a few
+// buttons along is the other control of exactly that kind, persisted under the same `margindocs-`
+// prefix and restored by the same boot script. The theme was a third until this week and is in
+// Settings now, where it can be a grid of tiles each drawn in the palette it offers, which is how
+// a colour is judged; a measure is judged against the page it is holding, so this one stayed out
+// here where the page is. The pill is also the wrong
 // place mechanically: its tools go dead while a save conflict is open, and being unable to widen
 // the page because the file moved on disk is nonsense, and the foot of src/styles/toolbar.css
 // records that the row is already four pixels over the pane at the app's minimum window.
@@ -29,8 +32,8 @@ import { Icon } from "./Icon";
 const ITEM = ".width-menu-item";
 
 // Both glyphs are margin-shared's, so this control looks the same in the book app. The arrow does
-// not change with the applied width and deliberately does not: an earlier version drew three lines
-// of text at three measures so the button said which width was on, and the two apps then had
+// not change with the applied width and deliberately does not: an earlier version drew lines of
+// text at each measure so the button said which width was on, and the two apps then had
 // different pictures of the same control. The width is on the menu, ticked, one click away.
 const { CHECK: CHECK_D, WIDTH: WIDTH_ICON } = icons;
 
@@ -43,8 +46,9 @@ function widthLabel(width: EditorWidth): string {
   return width.charAt(0).toUpperCase() + width.slice(1);
 }
 
-/** No attribute at all is the default, because sheet.css only writes rules for narrow and wide and
- * the boot script only sets the attribute when something was saved. */
+/** No attribute at all is the default, because normal is the measure the sheet already has and
+ * every other width is a rule keyed off the attribute, and because the boot script only sets it
+ * when something was saved. */
 function appliedWidth(): EditorWidth {
   const value = document.documentElement.getAttribute("data-width");
   return isWidth(value) ? value : "normal";
@@ -152,7 +156,7 @@ export function WidthMenu() {
             aria-labelledby={labelId}
             onKeyDown={onKeyDown}
           >
-            {/* Three words that mean nothing on their own, so the menu says what they are a width
+            {/* Five words that mean nothing on their own, so the menu says what they are a width
                 of and then lends the same line to assistive tech as its own name. Presentational
                 because a menu's children are meant to be its items, and because being announced as
                 the menu's name and again as a line inside it is the same sentence twice. */}

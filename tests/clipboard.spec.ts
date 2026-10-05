@@ -22,7 +22,6 @@ const README = `${HANDBOOK}/README.md`;
 async function openReadme(page: Page): Promise<void> {
   await page.addInitScript(() => {
     localStorage.clear();
-    localStorage.setItem("margindocs-dev-empty", "1");
     localStorage.setItem("margindocs-recents", JSON.stringify(["/Users/you/Documents/Handbook"]));
   });
   await page.goto("/");
@@ -38,7 +37,7 @@ test("a paste over a dragged rectangle of cells leaves every cell alone", async 
   const paragraph = page.locator(".prose p").first();
   await paragraph.click();
   await caretIsIn(paragraph);
-  await page.locator('.editor-toolbar .tool[title="Insert table"]').click();
+  await page.locator('.editor-toolbar .tool[aria-label="Insert table"]').click();
   await page.locator('.table-pop .size-cell[title="3 by 3 table"]').click();
 
   const cell = (row: number, column: number) =>
@@ -93,7 +92,7 @@ test("a paste of two paragraphs into a fence does not split the fence", async ({
   const words = (await paragraph.innerText()).trim();
   await paragraph.click();
   await caretIsIn(paragraph);
-  await page.locator('.editor-toolbar .tool[title="Code block"]').click();
+  await page.locator('.editor-toolbar .tool[aria-label="Code block"]').click();
   const fence = page.locator(".prose pre").filter({ hasText: words });
   await expect(fence).toHaveCount(1);
   // Counted rather than matched on its text, because the paste is about to change that text and a

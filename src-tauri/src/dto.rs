@@ -241,3 +241,17 @@ pub struct GrammarIssue {
     #[serde(default)]
     pub suggestions: Vec<String>,
 }
+
+/// What a window is asked to show: a standalone document, a folder, or a menu action that arrived
+/// while no window was open to run it. `window_init` returns the one a window was created with, and
+/// the `window-request` event carries one to a window that is already running.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowRequest {
+    #[serde(default)]
+    pub document: Option<String>,
+    #[serde(default)]
+    pub folder: Option<String>,
+    #[serde(default)]
+    pub action: Option<String>,
+}

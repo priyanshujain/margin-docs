@@ -5,24 +5,51 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <script>
       (function () {
-        try {
-          var root = document.documentElement;
+        var root = document.documentElement;
 
-          var t = localStorage.getItem("margindocs-theme");
-          if (t !== "light" && t !== "dark")
-            t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-          root.setAttribute("data-theme", t);
+        // Storage is read one key at a time rather than under one try, because a webview that
+        // refuses it should still get the theme the system asks for and the sidebar it opens with,
+        // not the first line of this script and then nothing.
+        function saved(key) {
+          try {
+            return localStorage.getItem(key);
+          } catch (e) {
+            return null;
+          }
+        }
 
-          var s = localStorage.getItem("margindocs-sidebar");
-          root.setAttribute("data-sidebar", s === "false" ? "false" : "true");
+        // The palettes in src/theme.ts, split by the scheme each belongs to. This script runs
+        // before any bundle exists so it cannot import that table, and src/theme.test.ts fails if
+        // these two lines and the table stop agreeing.
+        var LIGHT = ["light", "sepia", "mist", "contrast"];
+        var DARK = ["dark", "graphite", "midnight"];
 
-          // The three names are the editor-width command ids in src/keys/commands.ts, so a width
-          // the palette can set is a width this script can restore. What each name is worth lives
-          // in sheet.css and only there: this sets the attribute those rules key off, never a
-          // length of its own.
-          var w = localStorage.getItem("margindocs-width");
-          if (w === "narrow" || w === "normal" || w === "wide") root.setAttribute("data-width", w);
-        } catch (e) {}
+        // prefers-color-scheme is not the setting, it is what the setting resolves through when
+        // "Match system" is chosen and what everything falls back to when nothing readable is
+        // stored. Same rule src/theme.ts applies once React is up, and it has to be the same rule:
+        // the point of this script is that the first paint is already the right palette.
+        var night = matchMedia("(prefers-color-scheme: dark)").matches;
+        var choice = saved("margindocs-theme");
+        var theme;
+        if (LIGHT.indexOf(choice) !== -1 || DARK.indexOf(choice) !== -1) {
+          theme = choice;
+        } else {
+          var pool = night ? DARK : LIGHT;
+          var pick = saved(night ? "margindocs-theme-dark" : "margindocs-theme-light");
+          theme = pool.indexOf(pick) !== -1 ? pick : night ? "dark" : "light";
+        }
+        root.setAttribute("data-theme", theme);
+
+        var s = saved("margindocs-sidebar");
+        root.setAttribute("data-sidebar", s === "false" ? "false" : "true");
+
+        // The five names are the editor-width command ids in src/keys/commands.ts and the table in
+        // src/width.ts, so a width the palette can set is a width this script can restore. What
+        // each name is worth lives in sheet.css and only there: this sets the attribute those
+        // rules key off, never a length of its own.
+        var WIDTHS = ["tight", "narrow", "normal", "wide", "full"];
+        var w = saved("margindocs-width");
+        if (WIDTHS.indexOf(w) !== -1) root.setAttribute("data-width", w);
       })();
     </script>
     <title>Margin Docs</title>

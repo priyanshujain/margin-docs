@@ -167,6 +167,24 @@
   color: var(--ink-soft);
 }
 
+/* The two colour marks are the one piece of formatting that comes out of the document rather than
+   out of the palette. The hex is in the user's file, src/model/schema.ts writes it into the
+   element's own style attribute, and there is deliberately no colour here for either of them: a
+   token would be this app's opinion overriding what the file says, and a span with a rule of its
+   own would need a selector per swatch.
+
+   So a text colour gets no rule at all, and what is left for a highlight is its shape. The colour
+   is the only thing a <mark> can be told, since the user agent also gives it black text, which is
+   black text on a mid tone under the dark theme; box-decoration-break is what makes a highlight
+   that wraps two lines two shapes rather than one box drawn behind both. */
+.prose mark[data-highlight] {
+  color: inherit;
+  border-radius: var(--r-sm);
+  padding: 0.06em 0.18em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
 /* This palette has no link colour, because the book it came from had no links. Rather than invent
    a hue for it, a link is body text with a permanent underline: unmistakable in a scan, identical
    in both themes, and it keeps its surroundings' colour so a link inside a quote or a callout
@@ -409,6 +427,12 @@
    The <pre> holds the surface and the label; the <code> inside it is the scroller. Scrolling the
    pre itself would carry the language label away with the text, since an absolutely positioned
    child of a scroll container scrolls with its content.
+
+   A fence's top strip is chrome rather than code, which is what the padding below reserves. The
+   label at the left of it is drawn here, off the attribute the schema's own toDOM writes. The copy
+   control at the right of it is not: that one is a widget decoration from the code lane and it is
+   dressed in src/styles/code.css, the way the diagram a mermaid fence draws is dressed in
+   mermaid.css. What is here for either is only the room they stand in.
    -------------------------------------------------------------------------------------------- */
 
 /* The font-size is the document's, not the code's: the user agent gives a bare <pre> the monospace
@@ -430,7 +454,7 @@
 
 .prose pre > code {
   display: block;
-  padding: 0.9em 1.1em;
+  padding: var(--doc-code-pad) var(--doc-code-inset);
   background: none;
   border-radius: 0;
   font-family: var(--font-mono);
@@ -444,21 +468,29 @@
   overflow-wrap: normal;
 }
 
-.prose pre[data-language] > code {
-  padding-top: 1.9em;
+/* Room for a label, on the two fences that have one. A bare fence buys none of it: the copy button
+   is the only other thing up there, it is drawn on hover, and reserving a band of empty surface
+   above a single line of code to hold it made the block read as misaligned rather than as roomy. */
+.prose pre[data-language] > code,
+.prose pre[data-raw] > code {
+  padding-top: var(--doc-code-strip);
 }
 
-.prose pre[data-language]::before {
+/* The info string as the file spells it. Not upper cased, which it was: `TYPESCRIPT` is louder than
+   the code it labels and is not what the fence on disk says either. ::after rather than ::before,
+   because ::before is where a placeholder lands and a fence needs both at once. */
+.prose pre[data-language]::after {
   content: attr(data-language);
   position: absolute;
-  top: 0.55em;
-  right: 0.9em;
+  top: 0;
+  left: var(--doc-code-inset);
+  height: var(--doc-code-strip);
+  line-height: var(--doc-code-strip);
   z-index: 1;
   font-family: var(--font-ui);
   font-size: var(--t-1);
   font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: 0.04em;
   color: var(--ink-soft);
   pointer-events: none;
   user-select: none;
@@ -479,15 +511,13 @@
   border-radius: var(--r-sm);
 }
 
-.prose pre[data-raw] > code {
-  padding-top: 1.9em;
-}
-
-.prose pre[data-raw]::before {
+.prose pre[data-raw]::after {
   content: "not modelled";
   position: absolute;
-  top: 0.55em;
-  right: 0.9em;
+  top: 0;
+  right: var(--doc-code-inset);
+  height: var(--doc-code-strip);
+  line-height: var(--doc-code-strip);
   z-index: 1;
   font-family: var(--font-ui);
   font-size: var(--t-1);
@@ -529,53 +559,118 @@
   margin-bottom: 0;
 }
 
+/* A callout is one shape in five kinds, and each kind now says which it is twice: in the word on
+   the label and in the mark beside it.
+
+   The five used to share two treatments. Warning and caution took --danger and the other three were
+   the same grey box with a different word on top, and the comment here defended that: the palette
+   had one warning colour, and inventing four more would have forked the visual language for a
+   construct nothing else had designed yet. Two things changed. The document grew a code surface
+   with six hues of its own, chosen per palette to be legible ink on that palette's paper, so a tip
+   and an important are not new colours, they are two of that six put to a second use, and
+   tokens.css says which and why. And an icon per kind is what GitHub itself renders for these same
+   five alerts, so the mark below is not this app's invention either.
+
+   There is no emoji picker and there will not be one. AppFlowy's callout carries an arbitrary emoji
+   because its callout is its own block with somewhere to keep one. Ours is a GitHub alert: the kind
+   is one of exactly five words the file can spell, per CALLOUT_KINDS, and a glyph the user picked
+   would have nowhere in the bytes to live. The mark is per kind for that reason, drawn from this
+   sheet, and it costs the document nothing.
+
+   Each kind sets three custom properties and the rules below spend them, so a kind is one block of
+   four lines rather than four rules in four places. The glyph is a mask rather than an image: a
+   background image cannot be recoloured, and a data URI with the colour written into it would be a
+   literal hex outside the token layer, which is the one thing the CSS conventions rule out. What is
+   in the URI is a black stroke, and that black is the mask's alpha rather than a colour anybody
+   ever sees. */
 .prose .callout {
+  --callout-edge: var(--ink-faint);
+  --callout-ink: var(--ink-soft);
+  --callout-wash: var(--doc-wash);
+  --callout-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 11.2v5'/%3E%3Cpath d='M12 7.8h.01'/%3E%3C/svg%3E");
+
+  position: relative;
   margin: 1.5em 0;
   padding: 0.95em 1.15em;
-  background: var(--doc-wash);
+  background: var(--callout-wash);
   border: 1px solid var(--doc-rule);
-  border-left: 3px solid var(--ink-faint);
+  border-left: 3px solid var(--callout-edge);
   border-radius: var(--r-md);
 }
 
-/* The kind lives in an attribute, so without this the five alerts are one grey box. Built from ink
-   tones and --danger rather than five new hues: the palette has one warning colour and inventing
-   four more here would fork the visual language for a construct M2 has not designed yet. */
+/* The label's line box is exactly the glyph's square, which is what lets the mark below be placed
+   at the callout's own padding rather than measured against a line height. */
 .prose .callout::before {
   content: "Note";
   display: block;
   margin-bottom: 0.5em;
+  padding-left: calc(var(--doc-callout-icon) + 0.5em);
   font-family: var(--font-ui);
   font-size: var(--t-1);
+  line-height: var(--doc-callout-icon);
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--ink-soft);
+  color: var(--callout-ink);
+}
+
+.prose .callout::after {
+  content: "";
+  position: absolute;
+  top: 0.95em;
+  left: 1.15em;
+  width: var(--doc-callout-icon);
+  height: var(--doc-callout-icon);
+  background-color: var(--callout-ink);
+  -webkit-mask: var(--callout-mark) center / contain no-repeat;
+  mask: var(--callout-mark) center / contain no-repeat;
+}
+
+.prose .callout[data-callout="tip"] {
+  --callout-edge: var(--callout-tip);
+  --callout-ink: var(--callout-tip);
+  --callout-wash: var(--callout-tip-wash);
+  --callout-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 14.2c.2-1 .7-1.8 1.5-2.6A5.9 5.9 0 0 0 18 7.9 6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.6.8.8 1.3 1.6 1.5 2.6'/%3E%3Cpath d='M9.2 17.6h5.6'/%3E%3Cpath d='M10.4 21h3.2'/%3E%3C/svg%3E");
 }
 
 .prose .callout[data-callout="tip"]::before {
   content: "Tip";
 }
 
+.prose .callout[data-callout="important"] {
+  --callout-edge: var(--callout-important);
+  --callout-ink: var(--callout-important);
+  --callout-wash: var(--callout-important-wash);
+  --callout-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 14.5a2 2 0 0 1-2 2H7.8L3 21V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'/%3E%3Cpath d='M12 6.9v4.2'/%3E%3Cpath d='M12 13.9h.01'/%3E%3C/svg%3E");
+}
+
 .prose .callout[data-callout="important"]::before {
   content: "Important";
+}
+
+/* Warning and caution keep the one alarm colour the palette has always had. They are the two kinds
+   that mean stop, they are the two GitHub also draws in one family, and a third and a fourth red
+   would say nothing the word above them does not. */
+.prose .callout:is([data-callout="warning"], [data-callout="caution"]) {
+  --callout-edge: var(--danger);
+  --callout-ink: var(--danger-ink);
+  --callout-wash: var(--danger-wash);
+}
+
+.prose .callout[data-callout="warning"] {
+  --callout-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z'/%3E%3Cpath d='M12 9.2v4'/%3E%3Cpath d='M12 16.9h.01'/%3E%3C/svg%3E");
 }
 
 .prose .callout[data-callout="warning"]::before {
   content: "Warning";
 }
 
+.prose .callout[data-callout="caution"] {
+  --callout-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7.9 2h8.2L22 7.9v8.2L16.1 22H7.9L2 16.1V7.9z'/%3E%3Cpath d='M12 8.2v4'/%3E%3Cpath d='M12 15.9h.01'/%3E%3C/svg%3E");
+}
+
 .prose .callout[data-callout="caution"]::before {
   content: "Caution";
-}
-
-.prose .callout:is([data-callout="warning"], [data-callout="caution"]) {
-  border-left-color: var(--danger);
-  background: var(--danger-wash);
-}
-
-.prose .callout:is([data-callout="warning"], [data-callout="caution"])::before {
-  color: var(--danger-ink);
 }
 
 .prose .toggle {
@@ -651,13 +746,22 @@
 /* --------------------------------------------------------------------------------------------
    Tables
 
-   A table wider than the measure scrolls inside its own box. It must never widen the sheet, since
-   a document that scrolls sideways as a whole has lost its measure for every paragraph in it.
+   A grid, laid out the way a spreadsheet is rather than the way HTML lays a table out by default.
+   Every column is the same width until somebody drags one, and the widths are fixed: a keystroke
+   in a cell never moves the column beside it. Under table-layout: auto every character typed
+   re-measured the whole table, and the columns shuffled under the caret while a word went into
+   one of them, which is the wrong thing for an editor even where it is the right thing for a page.
 
-   Two shapes are supported because the editor may or may not wrap the table in a node view. With a
-   wrapper the table can be a real full width table that wraps its cells and only scrolls when even
-   the minimum content will not fit, which is the better behaviour; bare, the table becomes its own
-   scroll box and sizes to its content. The wrapper is worth having.
+   The node view prosemirror-tables installs wraps the table in .tableWrapper and writes a <col>
+   per column, with a width on each one that has been dragged, and puts the table's own min-width
+   inline: one column's minimum for every column that has not, see COLUMN_MIN in
+   src/editor/blocks/tables.ts. So the table fills the measure, the undragged columns share what
+   the dragged ones leave, and a table with more columns than the measure holds scrolls inside its
+   wrapper instead of squashing them. It must never widen the sheet, since a document that scrolls
+   sideways as a whole has lost its measure for every paragraph in it.
+
+   The bare shape underneath is for a table drawn with no node view around it, which the editor
+   never does but a preview might: it becomes its own scroll box and sizes to its content.
    -------------------------------------------------------------------------------------------- */
 
 .prose table {
@@ -667,7 +771,6 @@
   margin: 1.6em 0;
   overflow-x: auto;
   border-collapse: collapse;
-  table-layout: auto;
   font-size: var(--doc-table);
   line-height: 1.5;
 }
@@ -683,35 +786,154 @@
   width: 100%;
   margin: 0;
   overflow: visible;
+  table-layout: fixed;
 }
 
-/* Positioned because two of prosemirror-tables' decorations are absolutely positioned children of a
-   cell: the cell selection wash and the column resize handle. Without it they resolve against
-   .prose, which is the whole document surface, and selecting two cells paints over the page. */
+/* The bars that grow the table, and the gutter they are drawn in.
+
+   A widget decoration from src/editor/blocks/tables.ts puts them inside the <tbody>, after the
+   last row, which is the only place inside the table a decoration can land: the wrapper above is a
+   node view's element and nothing else may put a child in it. So they are taken out of flow, and
+   an absolutely positioned box among the rows is not wrapped in an anonymous cell and adds nothing
+   to the table's height. They resolve against the table rather than against the wrapper, which is
+   why the table is positioned here: the wrapper is the scroll box and the table is what scrolls
+   inside it, so a bar measured against the wrapper would sit at the edge of the window while the
+   column it appends after was somewhere off to the right.
+
+   The room they take is the sheet's own margin rather than the measure. The wrapper reserves a bar
+   on each of the two sides in padding and gives the same back in margin, so the table is still
+   exactly as wide as every other block on the page and the bar hangs in the gutter beside it,
+   which is the same trade the outline rail makes for the same space. Below the table there is
+   already a line of clearance to take it out of, so only what is left of it is still margin.
+
+   Both bars have to be inside the wrapper rather than beside it, because a scroll box clips on
+   both axes: overflow-x: auto computes the other axis to auto as well, so a bar hanging below the
+   table or past its right edge from outside would be cut off rather than drawn. */
+
+.prose .tableWrapper {
+  max-width: calc(100% + var(--doc-table-bar));
+  margin-right: calc(var(--doc-table-bar) * -1);
+  margin-bottom: calc(1.6em - var(--doc-table-bar));
+  padding-right: var(--doc-table-bar);
+  padding-bottom: var(--doc-table-bar);
+}
+
+.prose .tableWrapper > table {
+  position: relative;
+}
+
+/* The wrapper the two bars hang off. It draws nothing and takes no pointer events of its own,
+   since a box over the whole table would otherwise be the thing every click in every cell hit. */
+.prose .table-bars {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.prose :is(.table-add-row, .table-add-col) {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: var(--doc-rule);
+  /* The em the glyph is measured in. A button does not inherit the document's type, and without
+     this one the browser's own 13.333px would size it. */
+  font-size: var(--doc-table);
+  color: var(--ink-faint);
+  cursor: pointer;
+  opacity: 0;
+  /* Nothing at rest, and nothing under the pointer either: the strip under a table is a place
+     somebody clicks to put the caret past it, and an invisible button there would answer that
+     click by growing their table. The reveal below is what makes it pressable, so it can only ever
+     be pressed once it has said it is there. */
+  pointer-events: none;
+  transition: opacity 120ms var(--ease), background-color 120ms var(--ease), color 120ms var(--ease);
+}
+
+.prose :is(.table-add-row, .table-add-col) svg {
+  width: 0.75em;
+  height: 0.75em;
+}
+
+.prose .table-add-row {
+  top: 100%;
+  left: 0;
+  right: 0;
+  height: var(--doc-table-bar);
+}
+
+.prose .table-add-col {
+  top: 0;
+  bottom: 0;
+  left: 100%;
+  width: var(--doc-table-bar);
+}
+
+/* Revealed for the last row and the last column rather than for the table, which is the quieter
+   half of the same idea: a pointer resting anywhere in a long table is not a pointer asking to
+   grow it, and the row and the column each bar appends after are the two places the question
+   arises. `last-of-type` and not `:last-child`, because the widget above is the last child of the
+   <tbody> and the last row is no longer it.
+
+   The reveal is tree.css's, at the same two steps: the container's hover brings it up to a
+   presence, its own brings it the rest of the way. Its own hover is also what holds it there once
+   the pointer has left the row for the bar, and it cannot start it, since a bar nothing has
+   revealed takes no pointer events to be hovered with. */
+.prose table:has(> tbody > tr:last-of-type:hover) .table-add-row,
+.prose .table-add-row:is(:hover, :focus-visible),
+.prose table:has(> tbody > tr > :last-child:hover) .table-add-col,
+.prose .table-add-col:is(:hover, :focus-visible) {
+  opacity: 0.7;
+  pointer-events: auto;
+}
+
+.prose :is(.table-add-row, .table-add-col):is(:hover, :focus-visible) {
+  opacity: 1;
+  background: var(--doc-rule-strong);
+  color: var(--ink);
+}
+
+.prose :is(.table-add-row, .table-add-col):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Positioned because three things are drawn inside a cell against its box: the focus ring, the
+   cell selection wash and the column resize handle. Without it they resolve against .prose, which
+   is the whole document surface, and selecting two cells paints over the page.
+
+   Every edge of every cell is a rule, so the grid is drawn as a grid rather than as a header
+   underline over a set of row rules; with the borders collapsed a shared edge is one hairline. A
+   long word wraps rather than running under the next column, because a fixed column does not grow
+   to fit it. */
 .prose :is(th, td) {
   position: relative;
-  padding: 0.5em 0.8em;
-  border-bottom: 1px solid var(--doc-rule);
+  padding: 0.45em 0.65em;
+  border: 1px solid var(--doc-rule);
   text-align: left;
   vertical-align: top;
+  overflow-wrap: anywhere;
 }
 
 .prose th {
   font-weight: 650;
   color: var(--ink);
   background: var(--doc-wash);
-  border-bottom: 2px solid var(--doc-rule-strong);
+}
+
+/* Code in a cell wraps wherever it has to rather than claiming the width it needs. The column is
+   fixed, and an identifier broken across two lines is readable where an identifier run under the
+   next column is not. Dragging the column wider is the way to have both. */
+.prose :is(th, td) code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* GFM's per column alignment, carried on every cell so a cell never has to look upwards. A right
    aligned column is a numeric column often enough to be worth the figures lining up. */
-/* Code in a cell does not break. Letting --doc-rule-strong wrap across three lines to keep the
-   table narrow makes the column unreadable and the row four lines tall, and a table of identifiers
-   is the common case here. The column claims the width it needs and the table scrolls instead. */
-.prose :is(th, td) code {
-  white-space: pre;
-  overflow-wrap: normal;
-}
 
 .prose :is(th, td)[data-align="center"] {
   text-align: center;
@@ -779,6 +1001,20 @@
   pointer-events: none;
 }
 
+/* The cell taking the keys, ringed in the accent the way a spreadsheet does it. The class is a
+   node decoration from src/editor/blocks/tables.ts. Drawn a hairline outside the cell's box so the
+   ring sits over the grid lines rather than inside them, and only while the document itself holds
+   the keyboard: a ring on a cell in a document nobody is typing into is a lie about where the next
+   keystroke goes. */
+.prose.ProseMirror-focused :is(th, td).cell-focus::before {
+  z-index: 3;
+  position: absolute;
+  content: "";
+  inset: -1px;
+  border: 2px solid var(--accent);
+  pointer-events: none;
+}
+
 /* A widget decoration prosemirror-tables puts inside the cell the pointer is near, so it needs its
    geometry here or it lays out as a block and fills the cell with an accent bar. Half of it hangs
    over the border it is drawn on, and it takes no pointer events of its own: the plugin is watching
@@ -807,13 +1043,79 @@
 /* Attribute driven rather than class driven, so the empty node's own data-placeholder is the whole
    contract and there is no `is-` class in the stylesheet. It is a pseudo element because anything
    in the document tree would be content, and the one thing a placeholder must never do is end up
-   in the file. */
+   in the file.
+
+   The words are the attribute's for every block whose own element is the one the caret stands in,
+   which is every block bar a fence. The four rules under this one are the exceptions, and each is
+   an exception for the same reason: what an empty block should prompt with is sometimes a fact
+   about where it sits rather than about what it is, and the decoration is handed a node without a
+   parent. A CSS descendant selector knows the ancestry for free, so it answers instead. */
 .prose [data-placeholder]::before {
   content: attr(data-placeholder);
   float: left;
   height: 0;
   color: var(--ink-faint);
   pointer-events: none;
+}
+
+/* An empty paragraph that is the whole of a list item is the item, and "Start writing…" reads as a
+   second thing under a bullet rather than as the bullet's own line. */
+.prose li:not(.task-item) > p[data-placeholder]:first-child::before {
+  content: "List item";
+}
+
+.prose li.task-item > p[data-placeholder]:first-child::before {
+  content: "To-do";
+}
+
+.prose blockquote > p[data-placeholder]::before {
+  content: "Quote";
+}
+
+/* Nothing in a cell. A prompt is a hint about what a block is for, and a cell of a table the user
+   has just made is already unambiguous; the words are also wider than most columns, and floated out
+   of the line they would hang across the cell beside them. */
+.prose :is(th, td) > p[data-placeholder]::before {
+  content: "";
+}
+
+/* A fence is the one block whose own element is not where its caret is. TipTap writes
+   data-placeholder onto the empty node's element, which for a code block is the <pre>, and the rule
+   above floats the words out of the line at that element's content origin. A fence keeps its
+   padding on the <code> inside, so left to the general rule they landed on the top left corner of
+   the box, over the border, above and left of every character the block will ever hold, and in the
+   document's serif rather than the fence's mono. Placed against the <code>'s content box instead,
+   and set in the type the block is really in.
+
+   The second selector is the same block wearing a node view. A lane that draws a code block as
+   something bigger than a <pre> is handed the attribute on its own wrapper, and mermaid's is a div
+   holding the fence plus a picture it hides while there is nothing to draw. Matched structurally
+   rather than by that lane's class name, since what makes the offsets right is the fence being the
+   wrapper's first box and not which lane put it there. */
+.prose pre[data-placeholder]::before,
+.prose [data-placeholder]:has(> pre)::before {
+  position: absolute;
+  top: var(--doc-code-pad);
+  left: var(--doc-code-inset);
+  /* Over the fence rather than under it. A pseudo element is drawn before its own element's
+     children, and on the wrapper that means before the `<pre>`, whose fill is opaque. */
+  z-index: 1;
+  height: auto;
+  font-family: var(--font-mono);
+  font-size: var(--doc-mono);
+  line-height: 1.55;
+}
+
+/* And down onto the strip on the fence that bought one. Mermaid is the case that reaches here: its
+   lane draws the block through a node view, so the language is on a <pre> the placeholder's own
+   element only contains. */
+.prose pre[data-language][data-placeholder]::before,
+.prose [data-placeholder]:has(> pre[data-language])::before {
+  top: var(--doc-code-strip);
+}
+
+.prose [data-placeholder]:has(> pre) {
+  position: relative;
 }
 
 /* Find and replace paints inline decorations over live text, so a match cannot use --selection:

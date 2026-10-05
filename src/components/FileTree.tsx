@@ -1,7 +1,7 @@
 // The recursive half of the sidebar: rows, twisties, indentation and drop indicators, and nothing
 // else. Selection, the keyboard, the drag gesture and every action a row can perform live one
-// level up in Sidebar.tsx, because all of those span every open root and a recursive renderer only
-// ever sees one subtree.
+// level up in Sidebar.tsx, because all of those are about the tree as a whole and a recursive
+// renderer only ever sees one subtree.
 
 import {
   useEffect,
@@ -12,7 +12,7 @@ import {
   type PointerEvent,
 } from "react";
 import { useEscapeLayer } from "../escape";
-import { MARKDOWN_EXTENSIONS } from "../model/doc";
+import { MARKDOWN_EXTENSIONS, viewerKindForPath } from "../model/doc";
 import type { TreeNode } from "../store/useWorkspace";
 import { Icon } from "./Icon";
 import { RowMenu, type RowMenuEntry } from "./RowMenu";
@@ -83,7 +83,8 @@ export interface TreeViewState {
   draggingPath: string | null;
   dropTarget: DropTarget | null;
   renamingPath: string | null;
-  /** The document currently open in the editor, which is a different thing from the selected row. */
+  /** The file the pane is showing, edited or merely viewed, which is a different thing from the
+   * selected row. */
   openPath: string | null;
 }
 
@@ -136,7 +137,11 @@ function TreeItem({
   const open = node.isDir && state.expanded.has(node.path);
   const renaming = state.renamingPath === node.path;
   const drop = state.dropTarget?.row === node.path ? state.dropTarget.mode : null;
-  const foreign = !node.isDir && !node.editable;
+  // Greyed is about what happens when the row is clicked, not about whether it can be edited. A
+  // picture and a PDF are not editable and do open here, read only, so they are drawn like any
+  // other row; what stays grey is what the app has nothing at all to show and hands to macOS. The
+  // glyph still separates the three, since a row that opens in a viewer is not a document.
+  const foreign = !node.isDir && !node.editable && viewerKindForPath(node.path) === null;
 
   return (
     <li className="tree-item">
@@ -183,7 +188,10 @@ function TreeItem({
         )}
 
         <span className="tree-glyph" aria-hidden="true">
-          <Icon d={node.isDir ? (open ? FOLDER_OPEN : FOLDER) : foreign ? FOREIGN : DOCUMENT} size={15} />
+          <Icon
+            d={node.isDir ? (open ? FOLDER_OPEN : FOLDER) : node.editable ? DOCUMENT : FOREIGN}
+            size={15}
+          />
         </span>
 
         {renaming ? (

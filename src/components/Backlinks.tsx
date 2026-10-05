@@ -22,6 +22,7 @@ import type { Backlink } from "../ipc";
 import { useDocument } from "../store/useDocument";
 import { useIndex } from "../store/useIndex";
 import { notify } from "../store/useToast";
+import { openDocumentHere } from "../windows";
 
 interface Answer {
   /** The document these were asked for, kept with them so a slow reply about the file that was open
@@ -49,7 +50,6 @@ const readableSnippet = (snippet: string): string =>
 
 export function Backlinks() {
   const path = useDocument((s) => s.path);
-  const open = useDocument((s) => s.open);
   const phase = useIndex((s) => s.phase);
 
   const [answer, setAnswer] = useState<Answer | null>(null);
@@ -101,7 +101,7 @@ export function Backlinks() {
   };
 
   const go = (target: string) => {
-    open(target).catch((e) => notify(`Could not open ${baseName(target)}: ${String(e)}`));
+    openDocumentHere(target).catch((e) => notify(`Could not open ${baseName(target)}: ${String(e)}`));
   };
 
   return (

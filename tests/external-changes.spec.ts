@@ -65,7 +65,6 @@ async function launch(page: Page): Promise<string[]> {
   await page.addInitScript(installTauriShim);
   await page.addInitScript(() => {
     localStorage.clear();
-    localStorage.setItem("margindocs-dev-empty", "1");
     localStorage.setItem("margindocs-recents", JSON.stringify(["/Users/you/Documents/Handbook"]));
   });
   await page.goto("/");

@@ -88,6 +88,34 @@ export const BINDINGS: readonly Binding[] = [
     allowInInput: true,
   },
 
+  // Google Docs' key for a link, and the one chord a person moving off it reaches for first. It is
+  // a document binding rather than a global one because what it opens is the pill's link popover,
+  // which is about the selection: with the palette or settings on screen there is no selection to
+  // put an address on, and the overlay context is what says so.
+  //
+  // Deliberately not on a native menu row. macOS fires a row's key equivalent itself, before the
+  // webview sees anything and without knowing what is on screen, so a Cmd+K on a menu would open
+  // the link popover behind an open palette and this row's whole point would be gone. Every
+  // accelerator in src-tauri/src/lib.rs belongs to a command that is true in every context, and
+  // this one is not one of those.
+  {
+    keys: ["cmd+k"],
+    command: "insert-link",
+    context: "document",
+    group: "Editing",
+    allowInInput: true,
+  },
+
+  // Taken in order to refuse it. What happens to a key nobody binds inside a contenteditable is
+  // not nothing, and src/keys/commands.ts says what this one would otherwise do to the file.
+  {
+    keys: ["cmd+u"],
+    command: "underline-unsupported",
+    context: "document",
+    group: "Editing",
+    allowInInput: true,
+  },
+
   // The Mac's own key for this. AppKit gives every NSTextView Cmd+; for "Check Spelling", so it is
   // the one chord a user is liable to try before reading anything, and it is free: nothing else in
   // this table binds it and neither does any extension in src/editor, whose chords are all Mod with
@@ -131,10 +159,29 @@ export const BINDINGS: readonly Binding[] = [
     group: "View",
     allowInInput: true,
   },
+  // Cmd+Shift+\, which arrives as `|` because shift is baked into the key, and which sits on the
+  // sidebar's chord on purpose: the outline is a section of the sidebar, and a person who has
+  // learned one is a shift away from the other.
+  {
+    keys: ["cmd+|"],
+    command: "toggle-outline",
+    context: "document",
+    group: "View",
+    allowInInput: true,
+  },
 
   // The palette is the one thing an overlay may not shadow: it is how you get anywhere from
-  // inside anything else.
-  { keys: ["cmd+k"], command: "command-palette", context: "global", group: "App", allowInInput: true },
+  // inside anything else. It sits on VS Code's chord rather than on the Cmd+K it used to hold,
+  // because Cmd+K is a link everywhere a person writes prose and there is nowhere else to put
+  // that; Cmd+Shift+P was free, and Cmd+P stays quick open, so the pair reads the way an editor
+  // user already expects it to.
+  {
+    keys: ["cmd+P"],
+    command: "command-palette",
+    context: "global",
+    group: "App",
+    allowInInput: true,
+  },
   { keys: ["cmd+,"], command: "settings", context: "document", group: "App", allowInInput: true },
   { keys: ["?", "cmd+/"], command: "shortcuts", context: "document", group: "App" },
   // Escape unwinds the layer stack in `src/escape.ts`, which knows about nested confirmations.

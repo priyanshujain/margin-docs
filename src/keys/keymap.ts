@@ -65,9 +65,11 @@ export function useKeyContext(context: KeyContext, active = true): void {
 function comboOf(e: KeyboardEvent): string {
   const mods =
     (primaryHeld(e) ? "cmd+" : "") + (secondaryHeld(e) ? "ctrl+" : "") + (e.altKey ? "alt+" : "");
-  // Not lowercased: Cmd+Shift+F and Cmd+F arrive as "F" and "f" respectively, and that case is
-  // the only thing telling them apart once a real modifier is already in the combo.
-  return mods ? `${mods}${e.key}` : e.key;
+  // Not lowercased: Cmd+Shift+F and Cmd+F are "F" and "f", and that case is the only thing telling
+  // them apart once a real modifier is already in the combo. WebKit reports the letter lowercase
+  // while Cmd is held, Shift or not, so Shift is applied here rather than trusted to `e.key`.
+  const key = e.shiftKey && /^[a-z]$/.test(e.key) ? e.key.toUpperCase() : e.key;
+  return mods ? `${mods}${key}` : key;
 }
 
 function resolve(combo: string): Binding | null {

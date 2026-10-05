@@ -2,45 +2,45 @@
 // no Rust: the fixture answers every command, so this exercises the actual UI without going
 // anywhere near anybody's documents.
 //
-// What is asserted here is the product's promises rather than the implementation's details. A
-// folder opens and shows a tree. A markdown file opens as formatted prose with no markdown syntax
-// anywhere on screen, which is the whole point of the editor. Typing marks the document unsaved and
-// the autosave clears it again. A .txt file opens as plain text with no formatting toolbar, because
-// there is nothing to format.
+// What is asserted here is the product's promises rather than the implementation's details. The
+// window opens on the start screen and a folder is chosen off it. One folder is open at a time, so
+// opening another replaces it. A markdown file opens as formatted prose with no markdown syntax
+// anywhere on screen, which is the whole point of the editor. New Document asks for a name before
+// it writes anything. Typing marks the document unsaved and the autosave clears it again. A .txt
+// file opens as plain text with no formatting toolbar, because there is nothing to format.
 
 import { expect, test, type Page } from "@playwright/test";
 import { caretIsIn } from "./caret";
 import { dirtyWasShown, watchDirty } from "./saving";
 
 const HANDBOOK = "/Users/you/Documents/Handbook";
+const SCRATCH = "/Users/you/Documents/Scratch";
 const README = `${HANDBOOK}/README.md`;
 const NOTES = `${HANDBOOK}/notes.txt`;
 
 const row = (path: string) => `.tree-row[data-path="${path}"]`;
 
 /**
- * A first launch: the fixture is seeded with two folders already open, which is the one state the
- * start screen can never be seen in. `margindocs-dev-empty` is the mock's own switch for that, and
- * the recents list is seeded beside it so a folder can be opened without a native picker there is
- * no browser equivalent of.
+ * A launch, which since the app stopped reopening last session's folder is always the start screen.
+ * The recents list is seeded because a folder is opened off that list here rather than through a
+ * native picker there is no browser equivalent of.
  */
-async function firstLaunch(page: Page): Promise<void> {
-  await page.addInitScript(() => {
+async function launch(page: Page, recents: string[] = [HANDBOOK]): Promise<void> {
+  await page.addInitScript((paths) => {
     localStorage.clear();
-    localStorage.setItem("margindocs-dev-empty", "1");
-    localStorage.setItem("margindocs-recents", JSON.stringify(["/Users/you/Documents/Handbook"]));
-  });
+    localStorage.setItem("margindocs-recents", JSON.stringify(paths));
+  }, recents);
   await page.goto("/");
 }
 
 async function openHandbook(page: Page): Promise<void> {
-  await firstLaunch(page);
+  await launch(page);
   await page.locator(".start-row").first().click();
   await expect(page.locator(row(HANDBOOK))).toBeVisible();
 }
 
 test("the app renders and opens on the start screen", async ({ page }) => {
-  await firstLaunch(page);
+  await launch(page);
 
   await expect(page.locator(".app")).toBeVisible();
   await expect(page.locator(".titlebar")).toBeVisible();
@@ -48,10 +48,87 @@ test("the app renders and opens on the start screen", async ({ page }) => {
   await expect(page.locator(".start-open")).toBeVisible();
   await expect(page.locator(".start-row")).toHaveCount(1);
   await expect(page.locator(".start-name")).toHaveText("Handbook");
+  await expect(page.locator(".start-path")).toHaveText("/Users/you/Documents");
 
-  // Nothing is open, so there is no tree and no document.
+  // Nothing is open, so there is no tree and no document. The fixture is seeded with two folders
+  // the backend still has open, which stands for what Rust persists across a relaunch, and this
+  // is the assertion that the window no longer adopts them.
   await expect(page.locator(".sidebar")).toHaveCount(0);
   await expect(page.locator(".prose")).toHaveCount(0);
+});
+
+// The user's own words for what was wrong: two projects in the sidebar at once is weird, and the
+// way out of one folder should be the list of folders rather than a second tree stacked under the
+// first. Both halves are asserted here, since neither is visible from a unit test of the store.
+test("one folder is open at a time and closing it goes back to the list", async ({ page }) => {
+  await launch(page, [HANDBOOK, SCRATCH]);
+  await expect(page.locator(".start-row")).toHaveCount(2);
+
+  await page.locator(".start-row").first().click();
+  await expect(page.locator(row(HANDBOOK))).toBeVisible();
+
+  // The picker has no browser equivalent, so opening a second folder goes through the prompt
+  // src/workspace.ts falls back to when there is no Tauri behind the page.
+  page.once("dialog", (dialog) => void dialog.accept(SCRATCH));
+  await page.locator('.sidebar-head button[aria-label="Open Folder…"]').click();
+
+  await expect(page.locator(row(SCRATCH))).toBeVisible();
+  await expect(page.locator(row(`${SCRATCH}/inbox.md`))).toBeVisible();
+  await expect(page.locator(row(HANDBOOK))).toHaveCount(0);
+  await expect(page.locator(".tree-section")).toHaveCount(1);
+
+  await page.locator(`${row(SCRATCH)} .row-menu-btn`).click();
+  await page.locator(".row-menu-pop button", { hasText: "Close Folder" }).click();
+
+  await expect(page.locator(".start")).toBeVisible();
+  await expect(page.locator(".sidebar")).toHaveCount(0);
+  await expect(page.locator(".start-row")).toHaveCount(2);
+
+  // And the list is a way back in, most recent first: Scratch was the last folder open.
+  await expect(page.locator(".start-name").first()).toHaveText("Scratch");
+  await page.locator(".start-row").first().click();
+  await expect(page.locator(row(SCRATCH))).toBeVisible();
+});
+
+test("a folder can be taken off the start screen without being touched", async ({ page }) => {
+  await launch(page, [HANDBOOK, SCRATCH]);
+
+  await page.locator(".start-item", { hasText: "Scratch" }).locator(".start-forget").click();
+
+  await expect(page.locator(".start-row")).toHaveCount(1);
+  await expect(page.locator(".start-name")).toHaveText("Handbook");
+
+  // Forgetting is about the list and nothing else: the folder still opens.
+  page.once("dialog", (dialog) => void dialog.accept(SCRATCH));
+  await page.locator(".start-open").click();
+  await expect(page.locator(row(SCRATCH))).toBeVisible();
+});
+
+// New Document used to write Untitled.md the moment it was pressed and drop the tree into an
+// inline rename field. It asks first now, and the promise worth pinning is the one about disk:
+// a panel that is dismissed leaves the folder exactly as it was found.
+test("New Document asks for a name and writes nothing until Save", async ({ page }) => {
+  await openHandbook(page);
+  const rows = await page.locator(".tree-row").count();
+
+  await page.locator('.sidebar-head button[aria-label="New Document"]').click();
+  const panel = page.locator(".panel-setup");
+  await expect(panel).toBeVisible();
+  await expect(panel.locator("h2")).toHaveText("New document");
+  await expect(panel.locator(".font-presets .font-preset").first()).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await expect(panel).toHaveCount(0);
+  await expect(page.locator(".tree-row")).toHaveCount(rows);
+  await expect(page.locator(row(`${HANDBOOK}/Untitled.md`))).toHaveCount(0);
+
+  await page.locator('.sidebar-head button[aria-label="New Document"]').click();
+  await panel.locator(".field input").fill("Roadmap");
+  await panel.locator(".btn-primary").click();
+
+  await expect(page.locator(row(`${HANDBOOK}/Roadmap.md`))).toBeVisible();
+  await expect(page.locator(".titlebar .doc-title")).toHaveText("Roadmap");
+  await expect(page.locator(".tree-rename")).toHaveCount(0);
 });
 
 test("opening a folder shows its tree", async ({ page }) => {
@@ -71,12 +148,19 @@ test("opening a folder shows its tree", async ({ page }) => {
   await expect(page.locator(`${row(NOTES)} .tree-name`)).toHaveText("notes.txt");
   await expect(page.locator(`${row(NOTES)} .tree-ext`)).toHaveCount(0);
 
-  // A file the editor will not open is greyed rather than hidden.
+  // A file the app has nothing to show is greyed rather than hidden. That is no longer the same set
+  // as "not editable": a picture and a PDF open in a read only viewer of their own now, so they are
+  // drawn like any other row and the only greyed thing left is what still goes to the system.
+  // tests/viewing.spec.ts is where what happens on the click is asserted.
   await page.locator(row(`${HANDBOOK}/reference`)).click();
   await page.locator(row(`${HANDBOOK}/reference/assets`)).click();
   const png = page.locator(row(`${HANDBOOK}/reference/assets/diagram.png`));
   await expect(png).toBeVisible();
-  await expect(png).toHaveAttribute("data-foreign", "true");
+  await expect(png).toHaveAttribute("data-foreign", "false");
+  await expect(page.locator(row(`${HANDBOOK}/reference/assets/brand.sketch`))).toHaveAttribute(
+    "data-foreign",
+    "true",
+  );
   await expect(page.locator(row(`${HANDBOOK}/reference/keyboard.md`))).toHaveAttribute(
     "data-foreign",
     "false",
@@ -113,7 +197,7 @@ test("a markdown file opens as formatted prose with no markdown syntax on screen
 
   // A markdown document gets the one formatting surface there is.
   await expect(page.locator(".editor-toolbar")).toBeVisible();
-  await expect(page.locator('.editor-toolbar .tool[title="Bold"]')).toBeEnabled();
+  await expect(page.locator('.editor-toolbar .tool[aria-label="Bold"]')).toBeEnabled();
 });
 
 test("typing marks the document unsaved and the autosave clears it", async ({ page }) => {

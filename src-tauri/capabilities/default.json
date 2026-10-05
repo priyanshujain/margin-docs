@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window, on every platform",
-  "windows": ["main"],
+  "description": "Capability for every app window, on every platform",
+  "windows": ["main", "window-*"],
   "permissions": ["core:default", "opener:default", "dialog:default"]
 }

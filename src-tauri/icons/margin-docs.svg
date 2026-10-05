@@ -3,12 +3,20 @@
      for every file in this directory; regenerate them with `pnpm tauri icon` after editing.
      Squircle 828 wide on a 1024 canvas is the macOS icon inset, and every coordinate is a multiple
      of 32 so bars and gaps land on whole pixels at 32x32. The block spans y 224..768 against a
-     centre of 512, which lifts it 16 above the geometric centre for optical balance. -->
+     centre of 512, which lifts it 16 above the geometric centre for optical balance.
+     Bars run 512 wide and 32 thick because this sits in the dock beside margin, margin-calendar and
+     margin-mail, and all three draw their glyph as a thin outline. 512 of the 828 tile is 0.62 of
+     its width and 32 of it is 0.039 of its width, which is margin-calendar's 0.63 and 0.040 to
+     within a pixel. At 576 and 64 the mark was both wider and more than twice the weight of
+     anything standing next to it, which is what made it read as oversized. Five bars rather than
+     four because a 32 thick bar carries half the ink a 64 thick one did, and the fifth line gives
+     the paragraph its texture back without borrowing weight the family does not use. -->
 <rect x="98" y="98" width="828" height="828" rx="185" fill="#0d0c0a"/>
 <g fill="#fcfbf7">
-<rect x="224" y="224" width="576" height="64" rx="32"/>
-<rect x="224" y="384" width="416" height="64" rx="32"/>
-<rect x="224" y="544" width="576" height="64" rx="32"/>
-<rect x="224" y="704" width="288" height="64" rx="32"/>
+<rect x="256" y="224" width="512" height="32" rx="16"/>
+<rect x="256" y="352" width="384" height="32" rx="16"/>
+<rect x="256" y="480" width="512" height="32" rx="16"/>
+<rect x="256" y="608" width="384" height="32" rx="16"/>
+<rect x="256" y="736" width="256" height="32" rx="16"/>
 </g>
 </svg>

@@ -3,7 +3,7 @@
   "identifier": "desktop",
   "description": "Window control, the updater and process restart, none of which a phone has",
   "platforms": ["macOS", "windows", "linux"],
-  "windows": ["main"],
+  "windows": ["main", "window-*"],
   "permissions": [
     "core:window:allow-destroy",
     "core:window:allow-start-dragging",

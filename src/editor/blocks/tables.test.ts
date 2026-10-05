@@ -18,10 +18,12 @@ import type { Transaction } from "@tiptap/pm/state";
 import { Fragment, Slice } from "@tiptap/pm/model";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { EditorView } from "@tiptap/pm/view";
+import type { DecorationSet } from "@tiptap/pm/view";
+import { GapCursor } from "@tiptap/pm/gapcursor";
 import { CellSelection, TableMap } from "@tiptap/pm/tables";
 import { createEditorExtensions } from "../extensions";
 import { serializeMarkdown } from "../../markdown";
-import { tableCommand, typingKey } from "./tables";
+import { barsKey, focusKey, growTable, tableCommand, typingKey } from "./tables";
 
 const EMPTY: JSONContent = { type: "doc", content: [{ type: "paragraph" }] };
 
@@ -50,7 +52,7 @@ function makeEditor(content: JSONContent = EMPTY): Editor {
 function press(editor: Editor, key: string, shift = false): boolean {
   const event = {
     key,
-    keyCode: key === "Tab" ? 9 : 8,
+    keyCode: KEY_CODES[key] ?? 8,
     shiftKey: shift,
     ctrlKey: false,
     altKey: false,
@@ -64,6 +66,47 @@ function press(editor: Editor, key: string, shift = false): boolean {
     if (handler && handler.call(plugin, view, event)) return true;
   }
   return false;
+}
+
+const KEY_CODES: Record<string, number> = { Tab: 9, Enter: 13, ArrowUp: 38, ArrowDown: 40 };
+
+/**
+ * `body`, run with the editor's view answering one question the way a browser would.
+ *
+ * Whether the caret is on the last line of its cell is a question about wrapped text, and the
+ * headless stand-in TipTap gives an unmounted editor throws for it. A keymap binding runs its
+ * command against `editor.view` rather than against the view the keydown arrived on, so the
+ * stand-in is swapped for the length of the body rather than handed to `press`: this is the view
+ * the running keymap asks, put where it asks. Everything else on it is what TipTap's own stand-in
+ * has, state held on the editor and a dispatch through the editor's own transaction path, so a key
+ * that moves the caret moves it for the assertions after. tests/tables.spec.ts presses the same
+ * keys against a real view.
+ */
+function atEdge(editor: Editor, edge: boolean, body: () => void): void {
+  const host = editor as unknown as {
+    editorView: EditorView | null;
+    editorState: EditorState;
+    dispatchTransaction(tr: Transaction): void;
+  };
+  host.editorView = {
+    get state() {
+      return host.editorState;
+    },
+    updateState: (state: EditorState) => {
+      host.editorState = state;
+    },
+    dispatch: (tr: Transaction) => host.dispatchTransaction(tr),
+    endOfTextblock: () => edge,
+    composing: false,
+    dragging: null,
+    editable: true,
+    isDestroyed: false,
+  } as unknown as EditorView;
+  try {
+    body();
+  } finally {
+    host.editorView = null;
+  }
 }
 
 /**
@@ -569,6 +612,417 @@ describe("a resized column", () => {
 
     expect(table(editor).firstChild!.firstChild!.attrs.colwidth).toEqual([180]);
     expect(written(editor)).toBe(before);
+    editor.destroy();
+  });
+});
+
+// The keys that move between rows, which are this file's own because the library's never fire
+// here. prosemirror-tables' arrow handling looks for the cell one level above the caret's parent,
+// which in its own schema is the paragraph inside a cell and in this one is the row, so against a
+// cell holding inline content it finds nothing and declines every key. What answered instead was the
+// gap cursor plugin, standing between two cells. Measured in Chromium: ArrowDown out of the last row
+// of a table with a paragraph under it put the caret between the first two cells of that row, drawn
+// as a phantom fourth column that shoved the other three sideways.
+describe("moving between rows", () => {
+  const withParagraphAfter = (): JSONContent => ({
+    type: "doc",
+    content: [
+      ...tableDoc(GRID).content!,
+      { type: "paragraph", content: [{ type: "text", text: "after" }] },
+    ],
+  });
+
+  const withHeadingBefore = (): JSONContent => ({
+    type: "doc",
+    content: [
+      { type: "heading", attrs: { level: 1 }, content: [{ type: "text", text: "T" }] },
+      ...tableDoc(GRID).content!,
+    ],
+  });
+
+  it("Enter moves to the cell below, in the same column", () => {
+    const editor = makeEditor(tableDoc(GRID));
+    cursorIn(editor, 0, 1);
+
+    expect(press(editor, "Enter")).toBe(true);
+    expect(editor.state.selection.from).toBe(inCell(editor, 1, 1));
+    expect(press(editor, "Enter")).toBe(true);
+    expect(editor.state.selection.from).toBe(inCell(editor, 2, 1));
+    expect(shape(editor)).toEqual(GRID);
+    editor.destroy();
+  });
+
+  it("Enter under the last row leaves the table for the block after it", () => {
+    const editor = makeEditor(withParagraphAfter());
+    cursorIn(editor, 2, 2);
+
+    expect(press(editor, "Enter")).toBe(true);
+    expect(editor.state.selection.$from.parent.textContent).toBe("after");
+    expect(editor.state.selection.$from.parentOffset).toBe(0);
+    expect(shape(editor)).toEqual(GRID);
+    editor.destroy();
+  });
+
+  it("Enter under the last row of a table that ends the document makes a paragraph to land in", () => {
+    const editor = makeEditor(tableDoc(GRID));
+    const before = written(editor);
+    cursorIn(editor, 2, 0);
+
+    expect(press(editor, "Enter")).toBe(true);
+    expect(editor.state.doc.childCount).toBe(2);
+    expect(editor.state.doc.lastChild?.type.name).toBe("paragraph");
+    expect(editor.state.selection.$from.parent).toBe(editor.state.doc.lastChild);
+    // An empty paragraph is nothing to the serializer, so the file is untouched by the key.
+    expect(written(editor)).toBe(before);
+    expect(shape(editor)).toEqual(GRID);
+    editor.destroy();
+  });
+
+  // Behind this lane's Enter is the core keymap's split, and a cell is isolating so the split
+  // declines, but that is the library's answer and this is the assertion: nine cells and a
+  // rectangle, and the grid is the grid it was.
+  it("Enter never splits a cell, a row or the table", () => {
+    const editor = makeEditor(tableDoc(GRID));
+    for (let row = 0; row < 3; row += 1) {
+      for (let column = 0; column < 3; column += 1) {
+        cursorIn(editor, row, column);
+        expect(press(editor, "Enter")).toBe(true);
+      }
+    }
+    expect(shape(editor)).toEqual(GRID);
+    expect(kinds(editor)[0]).toEqual(["tableHeader", "tableHeader", "tableHeader"]);
+
+    selectCells(editor, [1, 0], [2, 1]);
+    const before = editor.state.doc.toJSON();
+    expect(press(editor, "Enter")).toBe(true);
+    expect(editor.state.doc.toJSON()).toEqual(before);
+    editor.destroy();
+  });
+
+  it("ArrowDown off the last line of a cell goes to the row below, and out under the last row", () => {
+    const editor = makeEditor(withParagraphAfter());
+    atEdge(editor, true, () => {
+      cursorIn(editor, 0, 2);
+      expect(press(editor, "ArrowDown")).toBe(true);
+      expect(editor.state.selection.from).toBe(inCell(editor, 1, 2));
+
+      cursorIn(editor, 2, 2);
+      expect(press(editor, "ArrowDown")).toBe(true);
+      expect(editor.state.selection.$from.parent.textContent).toBe("after");
+    });
+    editor.destroy();
+  });
+
+  it("ArrowUp off the first line goes to the row above, and out over the header", () => {
+    const editor = makeEditor(withHeadingBefore());
+    atEdge(editor, true, () => {
+      cursorIn(editor, 1, 0);
+      expect(press(editor, "ArrowUp")).toBe(true);
+      expect(editor.state.selection.from).toBe(inCell(editor, 0, 0));
+
+      expect(press(editor, "ArrowUp")).toBe(true);
+      expect(editor.state.selection.$from.parent.type.name).toBe("heading");
+    });
+    editor.destroy();
+  });
+
+  it("makes a paragraph to land in at whichever end of the document the table is", () => {
+    const editor = makeEditor(tableDoc(GRID));
+    atEdge(editor, true, () => {
+      cursorIn(editor, 2, 1);
+      expect(press(editor, "ArrowDown")).toBe(true);
+      expect(editor.state.doc.lastChild?.type.name).toBe("paragraph");
+      expect(editor.state.selection.$from.parent).toBe(editor.state.doc.lastChild);
+
+      cursorIn(editor, 0, 1);
+      expect(press(editor, "ArrowUp")).toBe(true);
+      expect(editor.state.doc.firstChild?.type.name).toBe("paragraph");
+      expect(editor.state.selection.$from.parent).toBe(editor.state.doc.firstChild);
+      expect(editor.state.doc.child(1).type.name).toBe("table");
+      expect(editor.state.doc.childCount).toBe(3);
+    });
+    editor.destroy();
+  });
+
+  it("comes back in from the block beside the table: the header from above, the last row from below", () => {
+    const editor = makeEditor({
+      type: "doc",
+      content: [...withHeadingBefore().content!, ...withParagraphAfter().content!.slice(1)],
+    });
+    atEdge(editor, true, () => {
+      editor.commands.setTextSelection(2);
+      expect(editor.state.selection.$from.parent.type.name).toBe("heading");
+      expect(press(editor, "ArrowDown")).toBe(true);
+      expect(editor.state.selection.from).toBe(inCell(editor, 0, 0));
+
+      editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+      expect(editor.state.selection.$from.parent.textContent).toBe("after");
+      expect(press(editor, "ArrowUp")).toBe(true);
+      expect(editor.state.selection.from).toBe(inCell(editor, 2, 0));
+    });
+    editor.destroy();
+  });
+
+  // Where a click under a table that ends the document leaves the caret, and the one selection
+  // the gap cursor plugin still owns around a table. From there the way in is the same key.
+  it("comes back in from a gap cursor after the table", () => {
+    const editor = makeEditor(tableDoc(GRID));
+    atEdge(editor, true, () => {
+      const afterTable = editor.state.doc.content.size;
+      editor.view.dispatch(
+        editor.state.tr.setSelection(new GapCursor(editor.state.doc.resolve(afterTable))),
+      );
+      expect(editor.state.selection instanceof GapCursor).toBe(true);
+
+      expect(press(editor, "ArrowUp")).toBe(true);
+      expect(editor.state.selection.from).toBe(inCell(editor, 2, 0));
+    });
+    editor.destroy();
+  });
+
+  it("leaves the arrows to the browser on a middle line of a wrapped cell", () => {
+    const editor = makeEditor(withParagraphAfter());
+    atEdge(editor, false, () => {
+      cursorIn(editor, 2, 1);
+      const at = editor.state.selection.from;
+
+      expect(press(editor, "ArrowDown")).toBe(false);
+      expect(press(editor, "ArrowUp")).toBe(false);
+      expect(editor.state.selection.from).toBe(at);
+    });
+    editor.destroy();
+  });
+
+  // The other half of the fix. The keys above stop a caret being sent between two cells, and this
+  // stops the gap cursor plugin from accepting one there by any route: a `<div>` between two
+  // `<td>`s is a phantom cell, and the whole row lays out around it. Read off the built schema
+  // rather than off this file, because TipTap's own gap cursor extension writes the same field on
+  // every node and which of the two answers is a matter of extension order.
+  it("gives the gap cursor no place inside a table", () => {
+    const editor = makeEditor();
+    expect(editor.schema.nodes.table.spec.allowGapCursor).toBe(false);
+    expect(editor.schema.nodes.tableRow.spec.allowGapCursor).toBe(false);
+    editor.destroy();
+  });
+});
+
+describe("the focus ring", () => {
+  const ring = (editor: Editor) => {
+    const plugin = editor.state.plugins.find((candidate) => candidate.spec.key === focusKey);
+    if (!plugin) throw new Error("the focus ring plugin is not installed");
+    const set = plugin.props.decorations?.call(plugin, editor.state) as DecorationSet | null;
+    return set ? set.find() : [];
+  };
+
+  it("sits on the cell holding the caret and nowhere else", () => {
+    const editor = makeEditor(tableDoc(GRID));
+    cursorIn(editor, 1, 2);
+
+    const decorations = ring(editor);
+    expect(decorations).toHaveLength(1);
+    const cellPos = inCell(editor, 1, 2) - 1;
+    const cell = editor.state.doc.nodeAt(cellPos)!;
+    expect([decorations[0].from, decorations[0].to]).toEqual([cellPos, cellPos + cell.nodeSize]);
+    editor.destroy();
+  });
+
+  it("is not drawn for a rectangle of cells, or outside a table", () => {
+    const editor = makeEditor(tableDoc(GRID));
+    selectCells(editor, [0, 0], [1, 1]);
+    expect(ring(editor)).toHaveLength(0);
+    editor.destroy();
+
+    const prose = makeEditor();
+    expect(ring(prose)).toHaveLength(0);
+    prose.destroy();
+  });
+});
+
+// The two bars that grow a table, which are a widget decoration and therefore two questions rather
+// than one: where the decoration sits, and what a press on it does to the document.
+//
+// Where it sits is the half a unit test can see at all. There is no DOM here, so the element is
+// never built and nothing below touches a button; what is asserted instead is the position the
+// widget is anchored at, which is the position a press reads its table back out of.
+//
+// The press itself is asked of the same function the element's listener calls, through a stand-in
+// view of the shape src/editor/blocks/tables.ts asks for, rather than through a command written for
+// the test. tests/tables.spec.ts drives the real pointer at the real bar.
+describe("the bars that grow a table", () => {
+  const bars = (editor: Editor) => {
+    const plugin = editor.state.plugins.find((candidate) => candidate.spec.key === barsKey);
+    if (!plugin) throw new Error("the table bars plugin is not installed");
+    const set = plugin.props.decorations?.call(plugin, editor.state) as DecorationSet | null;
+    return set ? set.find() : [];
+  };
+
+  /** The smallest view `growTable` asks for: a state to read, a dispatch, and somewhere to focus. */
+  const viewOf = (editor: Editor): EditorView =>
+    ({
+      get state() {
+        return editor.state;
+      },
+      dispatch: (tr: Transaction) => editor.view.dispatch(tr),
+      focus: () => {},
+    }) as unknown as EditorView;
+
+  /** Where the one pair of bars in this document is anchored. */
+  const barPos = (editor: Editor): number => {
+    const found = bars(editor);
+    if (found.length !== 1) throw new Error(`expected one pair of bars, found ${found.length}`);
+    return found[0].from;
+  };
+
+  it("anchors one pair at the end of every table's own content, and none anywhere else", () => {
+    const editor = makeEditor(tableDoc(GRID));
+    const { node, pos } = tableAt(editor);
+    const decorations = bars(editor);
+
+    expect(decorations).toHaveLength(1);
+    // Inside the table, after the last row, which is the only place a decoration can be a child of
+    // the <tbody> the node view hands ProseMirror as the table's content.
+    expect([decorations[0].from, decorations[0].to]).toEqual([
+      pos + node.nodeSize - 1,
+      pos + node.nodeSize - 1,
+    ]);
+    editor.destroy();
+
+    const prose = makeEditor();
+    expect(bars(prose)).toHaveLength(0);
+    prose.destroy();
+  });
+
+  it("finds a table wherever in the tree it is, and one for each of two", () => {
+    const nested = makeEditor(NESTED);
+    expect(bars(nested)).toHaveLength(1);
+    nested.destroy();
+
+    const two = makeEditor({
+      type: "doc",
+      content: [...tableDoc(GRID).content!, ...tableDoc([["x"]]).content!],
+    });
+    expect(bars(two)).toHaveLength(2);
+    two.destroy();
+  });
+
+  // The whole point of the widget carrying the position: the toolbar's ops start from the selection
+  // and a bar cannot, because it is pressed with a pointer on a table the caret may be nowhere near
+  // and the press must not drag the caret across the document to make itself legal.
+  it("grows a table the caret is nowhere near", () => {
+    const editor = makeEditor({
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "before" }] },
+        ...tableDoc(GRID).content!,
+      ],
+    });
+    editor.commands.setTextSelection(2);
+    expect(editor.state.selection.$from.parent.type.name).toBe("paragraph");
+
+    expect(growTable(viewOf(editor), barPos(editor), "row")).toBe(true);
+    expect(shape(editor)).toEqual([...GRID, ["", "", ""]]);
+    editor.destroy();
+  });
+
+  it("appends a body row and leaves the caret in it", () => {
+    const editor = makeEditor(tableDoc(GRID));
+    cursorIn(editor, 0, 0);
+
+    expect(growTable(viewOf(editor), barPos(editor), "row")).toBe(true);
+    expect(shape(editor)).toEqual([...GRID, ["", "", ""]]);
+    expect(kinds(editor)[3]).toEqual(["tableCell", "tableCell", "tableCell"]);
+    expect(editor.state.selection.from).toBe(inCell(editor, 3, 0));
+    editor.destroy();
+  });
+
+  // The header cell is the one prosemirror-tables would get wrong on its own, and it is also where
+  // the caret goes: a column is named before it is filled, and the name is what the delimiter row
+  // is written from.
+  it("appends a column whose first cell is a header, and leaves the caret in that header", () => {
+    const editor = makeEditor(tableDoc(GRID));
+    cursorIn(editor, 2, 0);
+
+    expect(growTable(viewOf(editor), barPos(editor), "column")).toBe(true);
+    expect(shape(editor)).toEqual([
+      ["a", "b", "c", ""],
+      ["1", "2", "3", ""],
+      ["4", "5", "6", ""],
+    ]);
+    expect(kinds(editor)[0]).toEqual([
+      "tableHeader",
+      "tableHeader",
+      "tableHeader",
+      "tableHeader",
+    ]);
+    expect(kinds(editor)[1]).toEqual(["tableCell", "tableCell", "tableCell", "tableCell"]);
+    expect(editor.state.selection.from).toBe(inCell(editor, 0, 3));
+    editor.destroy();
+  });
+
+  it("grows a table that is one header cell, in both directions", () => {
+    const rows = makeEditor(tableDoc([["a"]]));
+    expect(growTable(viewOf(rows), barPos(rows), "row")).toBe(true);
+    expect(kinds(rows)).toEqual([["tableHeader"], ["tableCell"]]);
+    rows.destroy();
+
+    const columns = makeEditor(tableDoc([["a"]]));
+    expect(growTable(viewOf(columns), barPos(columns), "column")).toBe(true);
+    expect(kinds(columns)).toEqual([["tableHeader", "tableHeader"]]);
+    columns.destroy();
+  });
+
+  // Both bars go through the same two fixups the toolbar's ops do, for the reason the file's own
+  // header gives: prosemirror-tables builds a new cell from the attribute's default, so a column
+  // whose cells disagree with the delimiter row is a table the file cannot spell.
+  it("keeps every column saying what it already said", () => {
+    const editor = makeEditor(tableDoc(GRID));
+    cursorIn(editor, 1, 2);
+    tableCommand(editor, "alignRight");
+
+    expect(growTable(viewOf(editor), barPos(editor), "row")).toBe(true);
+    expect(aligns(editor)[3]).toEqual([null, null, "right"]);
+    expect(written(editor).split("\n")[1]).toBe("| - | - | -: |");
+
+    expect(growTable(viewOf(editor), barPos(editor), "column")).toBe(true);
+    expect(aligns(editor)[0]).toEqual([null, null, "right", null]);
+    expect(written(editor).split("\n")[1]).toBe("| - | - | -: | - |");
+    editor.destroy();
+  });
+
+  it("moves with the table when the table grows under it", () => {
+    const editor = makeEditor(tableDoc(GRID));
+    growTable(viewOf(editor), barPos(editor), "row");
+
+    const { node, pos } = tableAt(editor);
+    expect(barPos(editor)).toBe(pos + node.nodeSize - 1);
+    editor.destroy();
+  });
+
+  it("says no for a position that is not inside a table", () => {
+    const editor = makeEditor({
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "x" }] }],
+    });
+    const before = editor.state.doc.toJSON();
+
+    expect(growTable(viewOf(editor), 1, "row")).toBe(false);
+    expect(growTable(viewOf(editor), 1, "column")).toBe(false);
+    expect(editor.state.doc.toJSON()).toEqual(before);
+    editor.destroy();
+  });
+
+  // The claim the file contract rests on. A widget is chrome and never a node, so the decorations
+  // being there at all must be worth nothing to the serializer. tests/tables.spec.ts is the other
+  // half of this, where the elements are really drawn and the bytes really go to disk.
+  it("is worth nothing to the file it is drawn over", () => {
+    const editor = makeEditor(tableDoc(GRID));
+    const before = written(editor);
+    const tree = editor.state.doc.toJSON();
+
+    expect(bars(editor)).toHaveLength(1);
+
+    expect(written(editor)).toBe(before);
+    expect(editor.state.doc.toJSON()).toEqual(tree);
     editor.destroy();
   });
 });

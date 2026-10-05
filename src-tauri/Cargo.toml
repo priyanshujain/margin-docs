@@ -65,14 +65,23 @@ objc2 = "0.6"
 # NSMenu and its neighbours are for Writing Tools, which has no API this app can call: the system
 # puts a submenu on Edit and the only way in is to find that item and perform it. Deliberately not
 # NSWritingToolsCoordinator, which the sibling asks for and never uses.
+# NSWindow and the three view classes under it are for the traffic lights, which titlebar.rs moves
+# down onto the middle of a title bar the system has no idea is 46px tall.
 objc2-app-kit = { version = "0.3", features = [
     "NSSpellChecker",
     "NSApplication",
     "NSMenu",
     "NSMenuItem",
     "NSResponder",
+    "NSWindow",
+    "NSView",
+    "NSControl",
+    "NSButton",
+    "NSWorkspace",
 ] }
-objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSRange", "NSTextCheckingResult"] }
+objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSRange", "NSTextCheckingResult", "NSError", "NSURL"] }
+# The completion handler NSWorkspace calls back with when the user answers the default app prompt.
+block2 = "0.6"
 
 # There is no auto-updater and no process to restart on a phone: the store is the update channel.
 # Gated here as well as behind cfg(desktop) in lib.rs so a mobile build does not compile them at all.

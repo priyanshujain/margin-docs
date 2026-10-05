@@ -1,5 +1,5 @@
-// Cmd+P: every file the index knows about, across every open root, matched against the path it
-// sits at relative to that root.
+// Cmd+P: every file the index knows about in the open folder, matched against the path it sits at
+// relative to that folder.
 //
 // The query lives in the store rather than here because the store is also what asks SQLite, and the
 // two have to be able to disagree for a moment: the field shows the letter that was just typed
@@ -24,6 +24,7 @@ import { useIndex } from "../store/useIndex";
 import { useSearch } from "../store/useSearch";
 import { notify } from "../store/useToast";
 import { useWorkspace, type WorkspaceRoot } from "../store/useWorkspace";
+import { openDocumentHere } from "../windows";
 import { Palette, highlight, type PaletteRow, type PaletteStatus } from "./Palette";
 
 /** Long enough that a word is one query rather than five, short enough that the pause between two
@@ -36,22 +37,17 @@ const RECENT_LIMIT = 8;
 interface FileRow extends PaletteRow {
   path: string;
   name: string;
-  /** The path relative to its root, whole, because that is the string the index counted its match
-   * offsets against and a trimmed version of it would highlight the wrong characters. */
+  /** The path relative to the open folder, whole, because that is the string the index counted its
+   * match offsets against and a trimmed version of it would highlight the wrong characters. */
   where: string;
   ranges: readonly MatchRange[];
-  /** The root's own name, or empty. Filled in only when more than one folder is open and the
-   * relative path alone would be ambiguous between them, and empty for a root that was closed
-   * while its answer was still in flight. */
-  root: string;
 }
 
 const baseName = (path: string): string => path.slice(path.lastIndexOf("/") + 1) || path;
 
-function relativeTo(path: string, roots: readonly WorkspaceRoot[]): string {
-  for (const root of roots) {
-    if (path.startsWith(`${root.path}/`)) return path.slice(root.path.length + 1);
-  }
+/** The absolute path a visited document is remembered by, shown the way a hit off the index is. */
+function relativeTo(path: string, root: WorkspaceRoot | null): string {
+  if (root !== null && path.startsWith(`${root.path}/`)) return path.slice(root.path.length + 1);
   return path;
 }
 
@@ -65,11 +61,10 @@ export function QuickOpen() {
   const phase = useSearch((s) => s.quickOpenPhase);
   const error = useSearch((s) => s.quickOpenError);
   const indexPhase = useIndex((s) => s.phase);
-  const roots = useWorkspace((s) => s.roots);
+  const root = useWorkspace((s) => s.root);
   const select = useWorkspace((s) => s.select);
   const history = useDocument((s) => s.history);
   const openPath = useDocument((s) => s.path);
-  const openDocument = useDocument((s) => s.open);
 
   useEffect(
     () =>
@@ -101,7 +96,7 @@ export function QuickOpen() {
     // with the document that is now on screen. Opening a file from here and renaming it with the
     // next key otherwise renames whatever was last clicked in the sidebar.
     select(path);
-    openDocument(path).catch((e) => notify(`Could not open: ${String(e)}`));
+    openDocumentHere(path).catch((e) => notify(`Could not open: ${String(e)}`));
   };
 
   const searching = query.trim() !== "";
@@ -118,9 +113,8 @@ export function QuickOpen() {
         key: path,
         path,
         name: baseName(path),
-        where: relativeTo(path, roots),
+        where: relativeTo(path, root),
         ranges: [],
-        root: "",
         run: () => choose(path),
       });
     }
@@ -134,7 +128,6 @@ export function QuickOpen() {
         name: hit.name,
         where: hit.relPath,
         ranges: hit.ranges,
-        root: roots.length > 1 ? baseName(hit.rootPath) : "",
         run: () => choose(hit.path),
       }))
     : recent();
@@ -145,7 +138,7 @@ export function QuickOpen() {
     }
     if (!searching) {
       return {
-        text: roots.length === 0 ? "Open a folder first." : "Type to find a file by name or path.",
+        text: root === null ? "Open a folder first." : "Type to find a file by name or path.",
       };
     }
     if (phase === "loading") return { text: "Searching…" };
@@ -166,7 +159,6 @@ export function QuickOpen() {
         <span className="palette-main" title={row.path}>
           <span className="palette-name">{row.name}</span>
           <span className="palette-where">{highlight(row.where, row.ranges)}</span>
-          {row.root !== "" && <span className="palette-root">{row.root}</span>}
         </span>
       )}
     />

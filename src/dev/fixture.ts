@@ -4,9 +4,9 @@
 //
 // It is shaped like a folder somebody would really have rather than three files called test.md,
 // because every interesting case in this app is a case the tree has to render: nesting several
-// levels deep, a .txt that is editable, a .png that is not, an assets folder beside a document,
-// frontmatter, a callout, a table, a toggle, a code block, and relative links between documents
-// so backlinks have something to find.
+// levels deep, a .txt that is editable, a picture and a PDF that open read only, a file the app
+// can neither edit nor show, an assets folder beside a document, frontmatter, a callout, a table, a
+// toggle, a code block, and relative links between documents so backlinks have something to find.
 //
 // Anchored to the current time at load, so the tree never shows a modified date from last year.
 
@@ -23,8 +23,16 @@ export interface DevEntry {
   path: string;
   dir: boolean;
   text: string;
-  /** Not a text file. Greyed in the tree, opened by the system, refused by `file_read`. */
+  /** Not a text file: refused by `file_read` and served as bytes by `file_bytes` instead. */
   binary: boolean;
+  /**
+   * The bytes of a binary file, base64 encoded, and empty for everything else.
+   *
+   * A fixture that only knew a file was binary could put a row in the tree and nothing on screen,
+   * and the viewers are the whole reason those rows are clickable now. These are real files: the
+   * PNG decodes, the SVG draws, and pdf.js parses the PDF and reports two pages.
+   */
+  data: string;
   modifiedMs: number;
 }
 
@@ -194,17 +202,53 @@ Rebuild the index after the folder move
 `;
 
 /**
- * A one pixel PNG. The point of it is the tree row, not the image: it proves a file the editor
- * will not open is greyed and hands itself to the system instead.
+ * A one pixel PNG. It is the smallest thing that is really a picture: the tree row is not greyed,
+ * the viewer decodes it, and the size and dimensions it reports are the file's own.
  */
 export const devPng =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+/**
+ * A 2400x1600 diagram, deliberately larger than the pane it is drawn in, so that fitting a picture
+ * to the window and showing it at its natural size are two visibly different answers.
+ *
+ * An SVG is a picture here and never markup this app puts into its own DOM: it is a document that
+ * can carry script, and an `<img>` is the one way to draw one that never runs any.
+ */
+export const devSvg =
+  "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNDAwIiBoZWlnaHQ9IjE2MDAiIHZpZXdC" +
+  "b3g9IjAgMCAyNDAwIDE2MDAiPgogIDxyZWN0IHdpZHRoPSIyNDAwIiBoZWlnaHQ9IjE2MDAiIGZpbGw9IiNlY2U2ZGEiLz4K" +
+  "ICA8cmVjdCB4PSIyMDAiIHk9IjIyMCIgd2lkdGg9IjcwMCIgaGVpZ2h0PSIzNjAiIHJ4PSIyNCIgZmlsbD0iIzIzMjAxYiIv" +
+  "PgogIDxyZWN0IHg9IjE1MDAiIHk9IjIyMCIgd2lkdGg9IjcwMCIgaGVpZ2h0PSIzNjAiIHJ4PSIyNCIgZmlsbD0iIzZiNjQ1" +
+  "OCIvPgogIDxyZWN0IHg9Ijg1MCIgeT0iMTAwMCIgd2lkdGg9IjcwMCIgaGVpZ2h0PSIzNjAiIHJ4PSIyNCIgZmlsbD0iIzZi" +
+  "NjQ1OCIvPgogIDxwYXRoIGQ9Ik01NTAgNTgwIEwxMjAwIDEwMDAgTDE4NTAgNTgwIiBmaWxsPSJub25lIiBzdHJva2U9IiMy" +
+  "MzIwMWIiIHN0cm9rZS13aWR0aD0iMTIiLz4KPC9zdmc+Cg==";
+
+/**
+ * A two page PDF, written by hand with a real cross reference table rather than produced by a
+ * library, so what the browser suite exercises is pdf.js on a file it has to parse properly. Two
+ * pages rather than one because the count is on screen and a continuous scroll of one page proves
+ * nothing about the scroll.
+ */
+export const devPdf =
+  "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5" +
+  "cGUgL1BhZ2VzIC9LaWRzIFszIDAgUiA1IDAgUl0gL0NvdW50IDIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2Ug" +
+  "L1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAyMDAgMjYwXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCA+PiA+" +
+  "PgplbmRvYmoKNCAwIG9iago8PCAvTGVuZ3RoIDczID4+CnN0cmVhbQowLjE1IDAuMTQgMC4xMiByZyAyMCAyMDAgMTYwIDQw" +
+  "IHJlIGYgMC42IDAuNTggMC41MiByZyAyMCA0MCAxNjAgMTQwIHJlIGYKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9U" +
+  "eXBlIC9QYWdlIC9QYXJlbnQgMiAwIFIgL01lZGlhQm94IFswIDAgMjAwIDI2MF0gL0NvbnRlbnRzIDYgMCBSIC9SZXNvdXJj" +
+  "ZXMgPDwgPj4gPj4KZW5kb2JqCjYgMCBvYmoKPDwgL0xlbmd0aCA3MyA+PgpzdHJlYW0KMC4xNSAwLjE0IDAuMTIgcmcgMjAg" +
+  "NjAgMTYwIDI0IHJlIGYgMC42IDAuNTggMC41MiByZyAyMCAxMDAgMTIwIDEyMCByZSBmCmVuZHN0cmVhbQplbmRvYmoKeHJl" +
+  "ZgowIDcKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAw" +
+  "MDEyMSAwMDAwMCBuIAowMDAwMDAwMjI1IDAwMDAwIG4gCjAwMDAwMDAzNDcgMDAwMDAgbiAKMDAwMDAwMDQ1MSAwMDAwMCBu" +
+  "IAp0cmFpbGVyCjw8IC9TaXplIDcgL1Jvb3QgMSAwIFIgPj4Kc3RhcnR4cmVmCjU3MwolJUVPRgo=";
 
 const dir = (path: string, modifiedMs: number): DevEntry => ({
   path,
   dir: true,
   text: "",
   binary: false,
+  data: "",
   modifiedMs,
 });
 
@@ -213,6 +257,17 @@ const file = (path: string, text: string, modifiedMs: number): DevEntry => ({
   dir: false,
   text,
   binary: false,
+  data: "",
+  modifiedMs,
+});
+
+/** A file with bytes and no text: what `file_bytes` serves and `file_read` refuses. */
+const binary = (path: string, data: string, modifiedMs: number): DevEntry => ({
+  path,
+  dir: false,
+  text: "",
+  binary: true,
+  data,
   modifiedMs,
 });
 
@@ -224,14 +279,13 @@ export const devEntries: DevEntry[] = [
   file(`${HANDBOOK}/guides/writing.md`, writing, now - 2 * DAY),
   dir(`${HANDBOOK}/reference`, now - 5 * DAY),
   file(`${HANDBOOK}/reference/keyboard.md`, keyboard, now - 5 * DAY),
+  binary(`${HANDBOOK}/reference/checklist.pdf`, devPdf, now - 5 * DAY),
   dir(`${HANDBOOK}/reference/assets`, now - 5 * DAY),
-  {
-    path: `${HANDBOOK}/reference/assets/diagram.png`,
-    dir: false,
-    text: "",
-    binary: true,
-    modifiedMs: now - 5 * DAY,
-  },
+  binary(`${HANDBOOK}/reference/assets/diagram.png`, devPng, now - 5 * DAY),
+  binary(`${HANDBOOK}/reference/assets/architecture.svg`, devSvg, now - 5 * DAY),
+  // The one row left that the app can neither edit nor show, so the greyed row and the hand off to
+  // the system still have something to be true of.
+  binary(`${HANDBOOK}/reference/assets/brand.sketch`, "", now - 30 * DAY),
   dir(`${HANDBOOK}/archive`, now - 200 * DAY),
   dir(`${HANDBOOK}/archive/2024`, now - 200 * DAY),
   file(`${HANDBOOK}/archive/2024/retro.md`, retro, now - 200 * DAY),

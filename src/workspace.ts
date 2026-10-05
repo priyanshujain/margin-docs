@@ -1,6 +1,6 @@
-// Everything the open folders do outside memory: the native picker, the IPC that opens and walks a
-// root, the watcher subscription, and the two lists in localStorage that make a relaunch look like
-// the app was never closed.
+// Everything the open folder does outside memory: the native picker, the IPC that opens and walks
+// a root, the watcher subscription, and the list of recently opened folders in localStorage that
+// the start screen is drawn from.
 //
 // Nothing in here writes into a user's folder except through the file commands the tree UI asks
 // for. Opening a folder reads it and nothing else.
@@ -37,13 +37,14 @@ import {
   type IndexStatus,
   type WatchEvent,
 } from "./ipc";
+import { viewerKindForPath } from "./model/doc";
 import { applyIndexStatus, useIndex } from "./store/useIndex";
 import { useDocument } from "./store/useDocument";
+import { useViewer } from "./store/useViewer";
 import { useWorkspace, type TreeNode, type WorkspaceRoot } from "./store/useWorkspace";
 import { notify } from "./store/useToast";
 
 const RECENTS_KEY = "margindocs-recents";
-const ROOTS_KEY = "margindocs-roots";
 const RECENTS_LIMIT = 12;
 
 /** Rust already debounces the watcher; this only stops one burst becoming several tree reads. */
@@ -53,8 +54,6 @@ const DEFAULT_DOCUMENT_NAME = "Untitled.md";
 const DEFAULT_FOLDER_NAME = "Untitled Folder";
 
 const refreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-const baseName = (path: string): string => path.slice(path.lastIndexOf("/") + 1);
 
 /** Guarded the way src/theme.ts is, because the store tests run in Node with no storage at all. */
 function readList(key: string): string[] {
@@ -82,11 +81,11 @@ function rememberRecent(path: string): string[] {
   return next;
 }
 
-function rememberOpenRoots(): void {
-  writeList(
-    ROOTS_KEY,
-    useWorkspace.getState().roots.map((r) => r.path),
-  );
+/** Takes a folder off the start screen. The folder itself is not touched in any way. */
+export function forgetRecent(path: string): string[] {
+  const next = readList(RECENTS_KEY).filter((p) => p !== path);
+  writeList(RECENTS_KEY, next);
+  return next;
 }
 
 /**
@@ -105,10 +104,8 @@ function toTree(node: FileNode): TreeNode {
   };
 }
 
-function rootOwning(path: string): WorkspaceRoot | undefined {
-  return useWorkspace
-    .getState()
-    .roots.find((r) => path === r.path || path.startsWith(`${r.path}/`));
+function owns(root: WorkspaceRoot | null, path: string): root is WorkspaceRoot {
+  return root !== null && (path === root.path || path.startsWith(`${root.path}/`));
 }
 
 /** No native picker behind a browser tab, so the dev fixture is addressed by path instead. */
@@ -121,7 +118,13 @@ export async function pickFolder(): Promise<string | null> {
   return typeof picked === "string" ? picked : null;
 }
 
-/** Opens a folder, reads its tree once and starts watching it. Re-opening a root refreshes it. */
+/**
+ * Opens a folder, reads its tree once and starts watching it, in place of whatever was open.
+ *
+ * The new folder is read before the old one is let go of, so a folder that has been deleted or
+ * that will not answer leaves the user where they were rather than on an empty window. Re-opening
+ * the folder that is already open is a refresh and releases nothing.
+ */
 export async function addRoot(path: string): Promise<void> {
   useWorkspace.setState({ scanPhase: "scanning", scanError: null });
   let root: WorkspaceRoot;
@@ -134,22 +137,27 @@ export async function addRoot(path: string): Promise<void> {
     throw e;
   }
 
+  const previous = useWorkspace.getState().root;
   const recentFolders = rememberRecent(root.path);
   useWorkspace.setState((s) => ({
-    roots: s.roots.some((r) => r.id === root.id)
-      ? s.roots.map((r) => (r.id === root.id ? root : r))
-      : [...s.roots, root],
+    root,
+    // A folder somebody just opened should show what is in it, which is a different question from
+    // whether the folders inside it are open and is why this is not left to the remembered set.
+    expanded: new Set(s.expanded).add(root.path),
+    selectedPath: s.selectedPath !== null && owns(root, s.selectedPath) ? s.selectedPath : null,
     recentFolders,
     scanPhase: "idle",
     scanError: null,
   }));
-  rememberOpenRoots();
+  if (previous !== null && previous.id !== root.id) await releaseRoot(previous.id, previous.path);
 
   try {
     await watchStart(root.id);
   } catch (e) {
     notify(`${root.name} will not update on its own: ${String(e)}`);
   }
+  // Not awaited: the index is derived state and the folder is usable long before it is built.
+  void useIndex.getState().start();
 }
 
 /**
@@ -167,17 +175,17 @@ export async function releaseRoot(rootId: string, rootPath: string): Promise<voi
   if (open !== null && (open === rootPath || open.startsWith(`${rootPath}/`))) {
     useDocument.getState().close();
   }
-  writeList(
-    ROOTS_KEY,
-    readList(ROOTS_KEY).filter((p) => p !== rootPath),
-  );
+  // Nothing is open any more, so the index has nothing left to answer about. Asked of the store
+  // rather than assumed, because this same function is what lets go of the folder being replaced
+  // during a swap, and there the new folder's own pass has already started.
+  if (useWorkspace.getState().root === null) useIndex.getState().reset();
   await watchStop(rootId).catch(() => {});
   await rootClose(rootId).catch(() => {});
 }
 
 /** Re-reads one root's tree. Every mutation and every watch event ends up here. */
 export async function refreshRoot(rootId: string): Promise<void> {
-  if (!useWorkspace.getState().roots.some((r) => r.id === rootId)) return;
+  if (useWorkspace.getState().root?.id !== rootId) return;
   let tree: TreeNode[];
   try {
     tree = (await treeRead(rootId)).children.map(toTree);
@@ -185,11 +193,11 @@ export async function refreshRoot(rootId: string): Promise<void> {
     useWorkspace.setState({ scanPhase: "error", scanError: String(e) });
     return;
   }
-  useWorkspace.setState((s) => ({
-    roots: s.roots.map((r) => (r.id === rootId ? { ...r, tree } : r)),
-    scanPhase: "idle",
-    scanError: null,
-  }));
+  useWorkspace.setState((s) =>
+    s.root?.id === rootId
+      ? { root: { ...s.root, tree }, scanPhase: "idle", scanError: null }
+      : {},
+  );
 }
 
 function scheduleRefresh(rootId: string): void {
@@ -205,8 +213,8 @@ function scheduleRefresh(rootId: string): void {
 }
 
 async function refreshOwnerOf(path: string): Promise<void> {
-  const root = rootOwning(path);
-  if (root) await refreshRoot(root.id);
+  const root = useWorkspace.getState().root;
+  if (owns(root, path)) await refreshRoot(root.id);
 }
 
 /** A folder that has just had something put in it is a folder the user wants to see the inside of. */
@@ -215,8 +223,8 @@ function reveal(parentDir: string): void {
   if (!state.expanded.has(parentDir)) state.toggleExpanded(parentDir);
 }
 
-export async function createDocumentIn(parentDir: string): Promise<string> {
-  const node = await fileCreate(parentDir, DEFAULT_DOCUMENT_NAME);
+export async function createDocumentIn(parentDir: string, name: string): Promise<string> {
+  const node = await fileCreate(parentDir, name.trim() || DEFAULT_DOCUMENT_NAME);
   await refreshOwnerOf(node.path);
   reveal(parentDir);
   return node.path;
@@ -249,6 +257,7 @@ export async function renamePath(path: string, name: string): Promise<void> {
     useWorkspace.getState().select(node.path);
   }
   await followTheFile(open, affected, path, node.path);
+  followTheView(path, node.path);
 }
 
 /**
@@ -276,6 +285,24 @@ async function followTheFile(
 }
 
 /**
+ * The same for a picture or a PDF, which is a much shorter question than the document's.
+ *
+ * There is no buffer here and so no unsaved edit to weigh, which is why this is not folded into the
+ * function above: that one is entirely an argument about which copy of somebody's writing wins, and
+ * a view that cannot hold an edit would read as a case it had considered. A rename that takes the
+ * file out of the set this app can draw, `.png` to `.bin`, closes the view rather than reopening it
+ * on something with no viewer, since a pane left showing the old picture is a pane lying about
+ * which file is on screen.
+ */
+function followTheView(from: string, to: string): void {
+  const viewed = useViewer.getState().path;
+  if (viewed === null || !(viewed === from || viewed.startsWith(`${from}/`))) return;
+  const moved = to + viewed.slice(from.length);
+  if (viewerKindForPath(moved) === null) useViewer.getState().close();
+  else useViewer.getState().open(moved);
+}
+
+/**
  * Moves a file or folder into another folder, which is what a drag in the sidebar does.
  *
  * Same shape as `renamePath` and for the same reasons: the flush comes first, because a buffer that
@@ -295,6 +322,7 @@ export async function movePath(path: string, destDir: string): Promise<string> {
     useWorkspace.getState().select(node.path);
   }
   await followTheFile(open, affected, path, node.path);
+  followTheView(path, node.path);
   return node.path;
 }
 
@@ -304,11 +332,15 @@ export async function duplicatePath(path: string): Promise<string> {
   return node.path;
 }
 
-/** To the system Trash, and the open document goes with it if it was the thing that went. */
+/** To the system Trash, and whatever the pane was showing of it goes with it. */
 export async function trashPath(path: string): Promise<void> {
   await fileTrash(path);
   const open = useDocument.getState().path;
   if (open !== null && (open === path || open.startsWith(`${path}/`))) abandonDocument();
+  const viewed = useViewer.getState().path;
+  if (viewed !== null && (viewed === path || viewed.startsWith(`${path}/`))) {
+    useViewer.getState().close();
+  }
   const { selectedPath, select } = useWorkspace.getState();
   if (selectedPath !== null && (selectedPath === path || selectedPath.startsWith(`${path}/`))) {
     select(null);
@@ -345,22 +377,25 @@ export function startWorkspaceEvents(): () => void {
 }
 
 /**
- * Reopens last session's folders. The backend is asked what it already has open first, because in
- * a dev browser the fixture answers that question and there is nothing in localStorage to restore.
+ * What a launch restores, which is the recents list and nothing else.
+ *
+ * Reopening last session's folder was the old behaviour and it is gone on purpose: a window that
+ * comes back holding a project you had finished with is a window you have to close something in
+ * before you can start, so the app opens on the list of folders instead and waits to be told which
+ * one. src/components/Recents.tsx is that screen.
+ *
+ * The backend outlives the window's idea of what is open, though. `roots_list` reads a list Rust
+ * persists in the app data directory, so a folder from last session is still a live watcher and a
+ * live set of index rows on that side. Nothing on screen would mention it, so it is let go of here
+ * rather than left running behind the start screen.
  */
 export async function restoreSession(): Promise<void> {
-  useWorkspace.setState({ recentFolders: readList(RECENTS_KEY) });
-  if (!live()) return;
-  const known = await rootsList().catch(() => []);
-  const paths = known.map((r) => r.path);
-  for (const path of readList(ROOTS_KEY)) if (!paths.includes(path)) paths.push(path);
-  for (const path of paths) {
-    try {
-      await addRoot(path);
-    } catch (e) {
-      notify(`Could not open ${baseName(path)}: ${String(e)}`);
+  // Before the list goes on screen, not after. A row that can be clicked while the release is
+  // still running is a folder the user opens and this function then closes underneath them.
+  if (live()) {
+    for (const stale of await rootsList().catch(() => [])) {
+      await releaseRoot(stale.id, stale.path);
     }
   }
-  // Not awaited: the index is derived state and the app is usable long before it is built.
-  if (useWorkspace.getState().roots.length > 0) void useIndex.getState().start();
+  useWorkspace.setState({ recentFolders: readList(RECENTS_KEY) });
 }

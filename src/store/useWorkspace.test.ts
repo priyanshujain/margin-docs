@@ -1,5 +1,5 @@
-// The open folders with the disk faked out: what goes in the store when a root opens, what stops
-// when it closes, and what a relaunch is able to put back.
+// The open folder with the disk faked out: what goes in the store when a folder opens, what stops
+// when it closes, and what a relaunch does and deliberately no longer does.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FileNode } from "../ipc";
@@ -140,7 +140,7 @@ beforeEach(() => {
   }));
 
   useWorkspace.setState({
-    roots: [],
+    root: null,
     expanded: new Set(),
     selectedPath: null,
     showIgnored: false,
@@ -172,10 +172,10 @@ describe("opening a folder", () => {
     const { addRoot } = await import("../workspace");
     await addRoot(HANDBOOK);
 
-    const [root] = useWorkspace.getState().roots;
-    expect(root.id).toBe(`id-${HANDBOOK}`);
-    expect(root.name).toBe("Handbook");
-    expect(root.tree.map((n) => n.name)).toEqual(["README.md", "guides", "logo.png"]);
+    const root = useWorkspace.getState().root;
+    expect(root?.id).toBe(`id-${HANDBOOK}`);
+    expect(root?.name).toBe("Handbook");
+    expect(root?.tree.map((n) => n.name)).toEqual(["README.md", "guides", "logo.png"]);
     expect(watch.watchStart).toHaveBeenCalledWith(`id-${HANDBOOK}`);
     expect(files.fileCreate).not.toHaveBeenCalled();
     expect(files.fileWrite).not.toHaveBeenCalled();
@@ -185,7 +185,7 @@ describe("opening a folder", () => {
     const { addRoot } = await import("../workspace");
     await addRoot(HANDBOOK);
 
-    const [readme, guides, logo] = useWorkspace.getState().roots[0].tree;
+    const [readme, guides, logo] = useWorkspace.getState().root?.tree ?? [];
     expect(readme.isDir).toBe(false);
     expect(readme.editable).toBe(true);
     expect(guides.isDir).toBe(true);
@@ -194,22 +194,64 @@ describe("opening a folder", () => {
     expect(logo.children).toBeUndefined();
   });
 
-  it("remembers the folder so the next launch can put it back", async () => {
+  it("shows what is inside the folder without waiting to be asked", async () => {
+    const { addRoot } = await import("../workspace");
+    await addRoot(HANDBOOK);
+
+    expect(useWorkspace.getState().expanded.has(HANDBOOK)).toBe(true);
+  });
+
+  // Rewritten from "remembers the folder so the next launch can put it back". A launch no longer
+  // puts anything back, so the only list left is the one the start screen is drawn from, and
+  // `margindocs-roots` was removed along with the code that read it.
+  it("remembers the folder so the start screen can offer it back", async () => {
     const { addRoot } = await import("../workspace");
     await addRoot(HANDBOOK);
 
     expect(useWorkspace.getState().recentFolders).toEqual([HANDBOOK]);
     expect(JSON.parse(localStorage.getItem("margindocs-recents") ?? "[]")).toEqual([HANDBOOK]);
-    expect(JSON.parse(localStorage.getItem("margindocs-roots") ?? "[]")).toEqual([HANDBOOK]);
+    expect(localStorage.getItem("margindocs-roots")).toBeNull();
   });
 
-  it("refreshes a root that is opened twice instead of listing it twice", async () => {
+  it("refreshes the folder that is opened twice rather than closing and reopening it", async () => {
     const { addRoot } = await import("../workspace");
     await addRoot(HANDBOOK);
     await addRoot(HANDBOOK);
 
-    expect(useWorkspace.getState().roots).toHaveLength(1);
+    expect(useWorkspace.getState().root?.path).toBe(HANDBOOK);
     expect(useWorkspace.getState().recentFolders).toEqual([HANDBOOK]);
+    expect(roots.rootClose).not.toHaveBeenCalled();
+  });
+
+  // One folder at a time is the whole point of this pass, and the folder being replaced is not
+  // just dropped from memory: its watcher stops, the backend hears about it, and a document that
+  // came out of it is flushed and closed rather than left pointing into a tree that is gone.
+  it("replaces the folder that was open and lets the old one go", async () => {
+    const SCRATCH = "/Users/you/Documents/Scratch";
+    const { addRoot } = await import("../workspace");
+    await addRoot(HANDBOOK);
+    await useDocument.getState().open(`${HANDBOOK}/README.md`);
+    useWorkspace.getState().select(`${HANDBOOK}/README.md`);
+
+    await addRoot(SCRATCH);
+
+    expect(useWorkspace.getState().root?.path).toBe(SCRATCH);
+    expect(useWorkspace.getState().selectedPath).toBeNull();
+    expect(useDocument.getState().path).toBeNull();
+    expect(watch.watchStop).toHaveBeenCalledWith(`id-${HANDBOOK}`);
+    expect(roots.rootClose).toHaveBeenCalledWith(`id-${HANDBOOK}`);
+    expect(useWorkspace.getState().recentFolders).toEqual([SCRATCH, HANDBOOK]);
+  });
+
+  it("keeps the folder that is open when the new one cannot be read", async () => {
+    const { addRoot } = await import("../workspace");
+    await addRoot(HANDBOOK);
+    roots.treeRead.mockRejectedValueOnce(new Error("permission denied"));
+
+    await expect(addRoot("/Users/you/Documents/Scratch")).rejects.toThrow("permission denied");
+
+    expect(useWorkspace.getState().root?.path).toBe(HANDBOOK);
+    expect(roots.rootClose).not.toHaveBeenCalled();
   });
 
   it("reports a folder it could not read without leaving the phase stuck", async () => {
@@ -219,7 +261,7 @@ describe("opening a folder", () => {
     await expect(addRoot(HANDBOOK)).rejects.toThrow("permission denied");
     expect(useWorkspace.getState().scanPhase).toBe("error");
     expect(useWorkspace.getState().scanError).toContain("permission denied");
-    expect(useWorkspace.getState().roots).toHaveLength(0);
+    expect(useWorkspace.getState().root).toBeNull();
   });
 });
 
@@ -229,42 +271,68 @@ describe("closing a folder", () => {
     await addRoot(HANDBOOK);
     useWorkspace.getState().select(`${HANDBOOK}/README.md`);
 
-    useWorkspace.getState().closeFolder(HANDBOOK);
+    useWorkspace.getState().closeFolder();
     await vi.waitFor(() => expect(roots.rootClose).toHaveBeenCalled());
 
-    expect(useWorkspace.getState().roots).toHaveLength(0);
+    expect(useWorkspace.getState().root).toBeNull();
     expect(useWorkspace.getState().selectedPath).toBeNull();
     expect(watch.watchStop).toHaveBeenCalledWith(`id-${HANDBOOK}`);
     expect(roots.rootClose).toHaveBeenCalledWith(`id-${HANDBOOK}`);
-    expect(JSON.parse(localStorage.getItem("margindocs-roots") ?? "[]")).toEqual([]);
+    expect(files.fileTrash).not.toHaveBeenCalled();
+  });
+
+  it("keeps the folder on the start screen after it is closed", async () => {
+    const { addRoot } = await import("../workspace");
+    await addRoot(HANDBOOK);
+
+    useWorkspace.getState().closeFolder();
+    await vi.waitFor(() => expect(roots.rootClose).toHaveBeenCalled());
+
+    expect(useWorkspace.getState().recentFolders).toEqual([HANDBOOK]);
+  });
+
+  it("forgets a folder off the start screen without touching it", async () => {
+    const { addRoot } = await import("../workspace");
+    await addRoot(HANDBOOK);
+
+    useWorkspace.getState().forgetFolder(HANDBOOK);
+
+    expect(useWorkspace.getState().recentFolders).toEqual([]);
+    expect(JSON.parse(localStorage.getItem("margindocs-recents") ?? "[]")).toEqual([]);
     expect(files.fileTrash).not.toHaveBeenCalled();
   });
 });
 
+// Rewritten wholesale. This suite used to assert that a relaunch reopened every folder from
+// localStorage and from the backend's own list, and that is exactly the behaviour the user asked
+// to be rid of: the window now comes back on the start screen with nothing open.
 describe("restoring a session", () => {
-  it("opens what the backend already has and what was persisted, once each", async () => {
-    localStorage.setItem("margindocs-roots", JSON.stringify([HANDBOOK, "/Users/you/Scratch"]));
-    roots.rootsList.mockResolvedValue([
-      { id: `id-${HANDBOOK}`, path: HANDBOOK, name: "Handbook", openedMs: 1 },
-    ]);
+  it("opens nothing and puts the recents list on the start screen", async () => {
+    localStorage.setItem("margindocs-recents", JSON.stringify([HANDBOOK, "/Users/you/Scratch"]));
 
     await restoreSession();
 
-    expect(useWorkspace.getState().roots.map((r) => r.path)).toEqual([
-      HANDBOOK,
-      "/Users/you/Scratch",
-    ]);
-    expect(roots.rootOpen).toHaveBeenCalledTimes(2);
-    expect(index.indexRebuild).toHaveBeenCalledTimes(1);
+    expect(useWorkspace.getState().root).toBeNull();
+    expect(roots.rootOpen).not.toHaveBeenCalled();
+    expect(index.indexRebuild).not.toHaveBeenCalled();
+    expect(useWorkspace.getState().recentFolders).toEqual([HANDBOOK, "/Users/you/Scratch"]);
   });
 
-  it("carries on past a folder that is no longer there", async () => {
-    localStorage.setItem("margindocs-roots", JSON.stringify(["/gone", HANDBOOK]));
-    roots.rootOpen.mockRejectedValueOnce(new Error("no such directory"));
+  // Rust keeps its own list of open roots across a relaunch, and nothing on screen mentions them
+  // any more, so a watcher and a set of index rows would otherwise be left running for a folder
+  // the user cannot see or close.
+  it("lets go of the roots the backend was still holding from last session", async () => {
+    roots.rootsList.mockResolvedValue([
+      { id: `id-${HANDBOOK}`, path: HANDBOOK, name: "Handbook", openedMs: 1 },
+      { id: "id-scratch", path: "/Users/you/Scratch", name: "Scratch", openedMs: 2 },
+    ]);
 
     await restoreSession();
 
-    expect(useWorkspace.getState().roots.map((r) => r.path)).toEqual([HANDBOOK]);
+    expect(roots.rootClose).toHaveBeenCalledWith(`id-${HANDBOOK}`);
+    expect(roots.rootClose).toHaveBeenCalledWith("id-scratch");
+    expect(watch.watchStop).toHaveBeenCalledTimes(2);
+    expect(useWorkspace.getState().root).toBeNull();
   });
 });
 
@@ -275,14 +343,24 @@ describe("changing the tree", () => {
     roots.treeRead.mockClear();
   });
 
-  it("creates a document and re-reads the root it landed in", async () => {
+  // The name comes from the setup panel now rather than from a placeholder the tree then offers to
+  // rename, so the store is handed one instead of inventing it.
+  it("creates a document under the name it was given and re-reads the folder", async () => {
+    files.fileCreate.mockResolvedValue(file(`${HANDBOOK}/Meeting notes.md`));
+
+    const path = await useWorkspace.getState().newDocument(HANDBOOK, "Meeting notes.md");
+
+    expect(path).toBe(`${HANDBOOK}/Meeting notes.md`);
+    expect(files.fileCreate).toHaveBeenCalledWith(HANDBOOK, "Meeting notes.md");
+    expect(roots.treeRead).toHaveBeenCalledWith(`id-${HANDBOOK}`);
+  });
+
+  it("falls back to Untitled.md rather than writing a file with no name", async () => {
     files.fileCreate.mockResolvedValue(file(`${HANDBOOK}/Untitled.md`));
 
-    const path = await useWorkspace.getState().newDocument(HANDBOOK);
+    await useWorkspace.getState().newDocument(HANDBOOK, "   ");
 
-    expect(path).toBe(`${HANDBOOK}/Untitled.md`);
     expect(files.fileCreate).toHaveBeenCalledWith(HANDBOOK, "Untitled.md");
-    expect(roots.treeRead).toHaveBeenCalledWith(`id-${HANDBOOK}`);
   });
 
   it("creates a folder with a name the user can see and rename", async () => {

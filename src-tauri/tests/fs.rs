@@ -13,9 +13,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use margin_docs_lib::dto::FileNode;
 use margin_docs_lib::fs::{
-    atomic_write, create_file, create_folder, duplicate_entry, free_path, move_entry, read_document,
-    rename_entry, resolve_in_roots, root_id_for, scan_tree, trash_entry, write_asset,
-    write_document,
+    atomic_write, create_file, create_folder, duplicate_entry, free_path, move_entry, read_bytes,
+    read_document, rename_entry, resolve_in_roots, root_id_for, scan_tree, trash_entry,
+    write_asset, write_document, MAX_VIEW_BYTES,
 };
 use tempfile::TempDir;
 
@@ -253,6 +253,72 @@ fn a_document_that_is_not_utf8_is_an_error_and_not_a_lossy_read() {
     fs::write(&doc, [0xff, 0xfe, 0x00, 0x41]).unwrap();
 
     assert!(read_document(&doc).is_err());
+}
+
+#[test]
+fn a_viewed_file_gives_up_its_bytes_and_nothing_else() {
+    let dir = root();
+    let picture = dir.path().join("assets/shot.png");
+    fs::create_dir_all(picture.parent().unwrap()).unwrap();
+    // Not UTF-8, which is the whole point of this command existing beside `read_document`: the one
+    // that reads text refuses these bytes rather than mangling them, and this one hands them back.
+    let bytes = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0x00];
+    fs::write(&picture, bytes).unwrap();
+    let roots = vec![dir.path().to_string_lossy().into_owned()];
+    let before = fs::metadata(&picture).unwrap().modified().unwrap();
+
+    let read = read_bytes(&roots, &picture.to_string_lossy()).unwrap();
+
+    assert_eq!(read, bytes);
+    assert!(read_document(&picture).is_err());
+    assert_eq!(fs::metadata(&picture).unwrap().modified().unwrap(), before);
+    assert_eq!(fs::read_dir(picture.parent().unwrap()).unwrap().count(), 1);
+}
+
+#[test]
+fn a_viewed_path_outside_every_open_root_is_refused() {
+    // The same gate every other read goes through, asserted through the function the command runs
+    // rather than through `resolve_in_roots` on its own, because a guard that is never reached
+    // answers correctly in a test and does nothing in the app.
+    let inside = root();
+    let outside = root();
+    let secret = outside.path().join("secret.png");
+    write(&secret, "secret");
+    symlink(&secret, inside.path().join("link.png")).unwrap();
+    let roots = vec![inside.path().to_string_lossy().into_owned()];
+
+    assert!(read_bytes(&roots, &secret.to_string_lossy()).is_err());
+    assert!(read_bytes(&roots, &inside.path().join("link.png").to_string_lossy()).is_err());
+    assert!(read_bytes(&roots, &inside.path().join("../shot.png").to_string_lossy()).is_err());
+    assert!(read_bytes(&roots, "/etc/hosts").is_err());
+    // With nothing open, nothing is inside a root.
+    assert!(read_bytes(&[], &inside.path().join("shot.png").to_string_lossy()).is_err());
+}
+
+#[test]
+fn a_file_past_the_ceiling_is_refused_before_a_byte_of_it_is_read() {
+    let dir = root();
+    let huge = dir.path().join("scan.pdf");
+    // Sparse rather than written out, so the file the metadata describes costs nothing to make.
+    // That it is never read is the point being made: a read here would materialise sixty four
+    // megabytes of zeroes and the refusal would arrive after the hang it exists to prevent.
+    let sparse = fs::File::create(&huge).unwrap();
+    sparse.set_len(MAX_VIEW_BYTES + 1).unwrap();
+    let roots = vec![dir.path().to_string_lossy().into_owned()];
+
+    let refused = read_bytes(&roots, &huge.to_string_lossy()).unwrap_err();
+
+    assert!(refused.contains("scan.pdf"), "{refused}");
+    assert!(refused.contains("64 MB"), "{refused}");
+}
+
+#[test]
+fn a_folder_has_no_bytes_to_view() {
+    let dir = root();
+    fs::create_dir(dir.path().join("assets")).unwrap();
+    let roots = vec![dir.path().to_string_lossy().into_owned()];
+
+    assert!(read_bytes(&roots, &dir.path().join("assets").to_string_lossy()).is_err());
 }
 
 #[test]

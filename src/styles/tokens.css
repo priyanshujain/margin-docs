@@ -13,6 +13,13 @@
   --t-5: 16px;
   --scrim: rgba(35, 32, 27, 0.28);
   --shadow-raised: 0 1px 2px rgba(35, 32, 27, 0.05);
+
+  /* The one colour with the same value in every palette, and it is not an oversight. A PDF page is
+     white paper: that is what it is on disk, that is what it prints as, and that is what it looks
+     like in every other reader it is ever opened in. Tinting it with the theme would be the app
+     showing a document that does not exist. Declared once here rather than as a literal in the two
+     stylesheets that draw a page, which is what it was. */
+  --pdf-page: #fff;
 }
 
 :root[data-theme="dark"] {
@@ -38,15 +45,33 @@
   --doc-mono: 14px;
   --doc-mono-inline: 0.88em;
 
+  /* The fence's padding, and the taller top it takes when there is a label to stand in it. A <pre>
+     is set in the document's 17px and the <code> inside it in the mono 14px, so 0.9em on the
+     language label and 1.1em on the code text were never the same margin, and the copy button, which
+     carries its own font-size, was on a third. All four derive from --doc-mono here, so the label,
+     the button and the first character of code line up whichever element they hang on.
+     The strip is only spent on a fence that has something to put in it. A bare fence is padded like
+     any other block and its copy button sits on the first line of code, because a band of empty
+     surface above one line of code is the block looking broken rather than the block looking roomy. */
+  --doc-code-inset: calc(var(--doc-mono) * 1.1);
+  --doc-code-pad: calc(var(--doc-mono) * 0.9);
+  --doc-code-strip: calc(var(--doc-mono) * 1.9);
+  --doc-code-button: calc(var(--doc-mono) * 1.6);
+
   --doc-indent: 1.35em;
   --doc-gutter: 1.55em;
   --doc-check: 15px;
+  --doc-callout-icon: 15px;
   --doc-resize-handle: 4px;
+  --doc-table-bar: 16px;
 
+  --measure-tight: 31em;
   --measure-narrow: 38em;
   --measure-wide: 56em;
+  --measure-full: 104em;
 
   --sheet-pad-x: 26px;
+  --sheet-pad-x-full: 64px;
   --sheet-pad-t: 76px;
   --sheet-pad-b: 168px;
   --sheet-pad-x-compact: 18px;
@@ -95,4 +120,27 @@
   --code-function: #8ab6dd;
   --code-type: #bfa2e6;
   --code-variable: #7fc7bc;
+}
+
+/* The two accents a tip and an important are drawn in, and the only colours in this file that are
+   derived rather than declared.
+
+   Every other palette value is written out per theme, seven times over in themes.css, and these
+   four are not, because they have no value of their own to write: a tip is the green this document
+   already sets a string literal in and an important is the purple it already sets a type name in.
+   Those six hues were picked once per palette for exactly this job, a saturated ink that stays
+   legible on that palette's paper without turning a page into a chart. Naming them again here would
+   be seven more chances for one of them to drift from the sheet it was matched against, and
+   src/theme.test.ts could not catch that: a palette declaring a colour with the wrong value is not
+   a palette missing one.
+
+   The wash is a tenth of the ink over whatever is behind it, which is what --danger-wash is to
+   --danger in the shared sheet. A webview too old for color-mix drops the one declaration that
+   spends it and leaves the callout on the plain paper with its bar and its label still coloured,
+   which is GitHub's own rendering of an alert and the right thing to degrade to. */
+:root {
+  --callout-tip: var(--code-string);
+  --callout-tip-wash: color-mix(in srgb, var(--code-string) 10%, transparent);
+  --callout-important: var(--code-type);
+  --callout-important-wash: color-mix(in srgb, var(--code-type) 10%, transparent);
 }

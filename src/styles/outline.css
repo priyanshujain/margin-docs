@@ -1,0 +1,136 @@
+/* The outline rail: one tick per heading down the right edge of the page, and the list it opens
+   into under the pointer.
+ *
+ * Fixed, like the find bar, and for the same reason: the pane's right edge is the window's, and a
+ * rail that scrolled with the page would be reading the page's position back to itself. It sits in
+ * the margin the sheet already leaves beside the measure, so it takes nothing from the text, and it
+ * stays under the find bar, which is the one thing that shares the corner and is only ever there
+ * for a moment. */
+
+:root {
+  --outline-top: 88px;
+  --outline-right: 16px;
+  --outline-panel-w: 248px;
+}
+
+.outline {
+  position: fixed;
+  top: calc(var(--titlebar-h) + var(--outline-top));
+  right: var(--outline-right);
+  z-index: 20;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* The padding is the hit area: the ticks are two pixels tall and nobody should have to aim at
+   them. */
+.outline-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 8px 6px;
+  border-radius: var(--r-sm);
+  cursor: default;
+}
+
+/* Longer for a section and shorter for what sits under it, right aligned so the lengths read as
+   an indent, which is what they stand for. Three steps and then a floor. */
+.outline-tick {
+  display: block;
+  width: max(6px, calc(18px - var(--outline-depth) * 5px));
+  height: 2px;
+  border-radius: 1px;
+  background: var(--ink-faint);
+  opacity: 0.6;
+  transition: background 120ms var(--ease), opacity 120ms var(--ease);
+}
+
+.outline-tick[data-current="true"] {
+  background: var(--ink);
+  opacity: 1;
+}
+
+/* Open: the ticks go and the list takes their corner, so it appears where the pointer already is
+   and the pointer is inside it before it has moved. Hidden rather than removed, so the box the
+   list is anchored to keeps its size. */
+.outline[data-open="true"] .outline-rail {
+  visibility: hidden;
+}
+
+.outline-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: var(--outline-panel-w);
+  max-height: calc(100vh - var(--titlebar-h) - var(--outline-top) - 120px);
+  display: flex;
+  flex-direction: column;
+  padding: 8px 6px;
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop);
+  animation: outline-open 120ms var(--ease);
+}
+
+@keyframes outline-open {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Positioned so that a row's offsetTop is measured from the list, which is what keeps the
+   reader's row in sight without scrollIntoView. */
+.outline-list {
+  position: relative;
+  min-height: 0;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* One step in per heading above it. A long title wraps rather than being cut: the list is up for
+   a moment and the whole title is what it is up for. */
+.outline-row {
+  display: block;
+  width: 100%;
+  padding: 4px 8px 4px calc(8px + var(--outline-depth) * 12px);
+  border-radius: var(--r-sm);
+  font-family: var(--font-ui);
+  font-size: var(--t-2);
+  line-height: 1.4;
+  text-align: left;
+  color: var(--ink-soft);
+  transition: background 120ms var(--ease), color 120ms var(--ease);
+}
+
+.outline-row:hover {
+  background: var(--accent-wash);
+  color: var(--ink);
+}
+
+/* The section on screen, in the accent, which is the one colour in the list. */
+.outline-row[data-current="true"] {
+  color: var(--accent);
+}
+
+/* A finger needs a target even where a pointer does not. */
+:root[data-touch] .outline-row {
+  display: flex;
+  align-items: center;
+  min-height: var(--touch-h);
+}
+
+/* No margin to sit in on a phone. */
+:root[data-phone] .outline {
+  display: none;
+}

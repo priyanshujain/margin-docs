@@ -1,0 +1,323 @@
+/* The palettes beyond the two margin-shared ships.
+ *
+ * Light and dark are not here. They live in margin-shared/css/tokens.css and in the two blocks
+ * tokens.css adds on top, they are the values every saved preference in the wild already names, and
+ * a copy of them in this file would be a second place for them to drift. What this file holds is
+ * the five that only Margin Docs has, plus the one line light and dark were missing: color-scheme,
+ * so the scrollbars, the caret and the native form controls the webview draws come out the same
+ * temperature as the page they sit on.
+ *
+ * Every block declares the same thirty five custom properties, and that is the contract rather than
+ * a convention. A palette that leaves one out does not fall back to nothing, it falls back to the
+ * warm light value in the `:root` block of tokens.css, which is one wrong colour in one corner
+ * nobody looks at until they do. src/theme.test.ts reads this file and fails if a block is short.
+ *
+ * The order inside each block is the order the token layer declares them in: surfaces, ink, lines,
+ * accent, danger, shadows, then the document's own rules and its code surface. Reading two palettes
+ * side by side is the only way to tell whether they are the same design in two temperatures or two
+ * designs, so they are kept literally line for line.
+ *
+ * The names are what the palette looks like. Two of these were drawn by reading somebody else's
+ * app very closely, and naming a theme after their product would be putting their trademark on this
+ * app's settings screen. */
+
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+/* Sepia. Paper that has been in a drawer since the seventies, for reading rather than for chrome:
+   the ink is brown rather than black and the accent is the same brown gone deeper, because a grey
+   or a blue on this paper reads as a stain. */
+:root[data-theme="sepia"],
+.theme-swatch[data-theme="sepia"] {
+  color-scheme: light;
+
+  --paper: #f4e9d8;
+  --shell: #ece0c9;
+  --sidebar: #e7d9bf;
+  --raised: #f8f0e2;
+
+  --ink: #453425;
+  --ink-soft: #6e5940;
+  --ink-faint: #8a6f50;
+
+  --line: #dccdb1;
+  --line-strong: #c8b494;
+
+  --accent: #6b4423;
+  --accent-ink: #513118;
+  --accent-wash: rgba(107, 68, 35, 0.12);
+  --accent-contrast: #faf3e6;
+  --selection: rgba(107, 68, 35, 0.18);
+  --glass: rgba(244, 233, 216, 0.88);
+
+  --danger: #a63a2a;
+  --danger-ink: #85291c;
+  --danger-wash: rgba(166, 58, 42, 0.12);
+  --danger-contrast: #faf3e6;
+
+  --shadow-page: 0 1px 2px rgba(69, 52, 37, 0.08), 0 14px 30px rgba(69, 52, 37, 0.12);
+  --shadow-pop: 0 8px 24px rgba(69, 52, 37, 0.18);
+  --scrim: rgba(69, 52, 37, 0.3);
+  --shadow-raised: 0 1px 2px rgba(69, 52, 37, 0.07);
+
+  --doc-rule: #dccdb1;
+  --doc-rule-strong: #c1a983;
+  --doc-wash: rgba(69, 52, 37, 0.05);
+
+  --code-surface: #ecdfc6;
+  --code-line: #d9c6a4;
+  --code-wash: rgba(69, 52, 37, 0.08);
+
+  --code-keyword: #8a3554;
+  --code-string: #4a6428;
+  --code-number: #8f5318;
+  --code-function: #2c5c85;
+  --code-type: #684590;
+  --code-variable: #22665e;
+}
+
+/* Mist. A cool near white page with grey ink and almost no chroma anywhere, which is the look of
+   the browser-tab document apps: white paper, a page-coloured sidebar a shade under it, and an
+   accent that is only a darker grey. The selection is grey too rather than the usual blue, because
+   one saturated colour in a palette this quiet is the only thing you would see. */
+:root[data-theme="mist"],
+.theme-swatch[data-theme="mist"] {
+  color-scheme: light;
+
+  --paper: #ffffff;
+  --shell: #f3f4f6;
+  --sidebar: #eef0f3;
+  --raised: #fafbfc;
+
+  --ink: #21242a;
+  --ink-soft: #565c66;
+  --ink-faint: #767d88;
+
+  --line: #e5e7eb;
+  --line-strong: #d3d7de;
+
+  --accent: #2d3138;
+  --accent-ink: #14171b;
+  --accent-wash: rgba(33, 36, 42, 0.07);
+  --accent-contrast: #ffffff;
+  --selection: rgba(33, 36, 42, 0.13);
+  --glass: rgba(255, 255, 255, 0.86);
+
+  --danger: #c04437;
+  --danger-ink: #a1332a;
+  --danger-wash: rgba(192, 68, 55, 0.1);
+  --danger-contrast: #ffffff;
+
+  --shadow-page: 0 1px 2px rgba(17, 22, 30, 0.05), 0 14px 30px rgba(17, 22, 30, 0.08);
+  --shadow-pop: 0 8px 24px rgba(17, 22, 30, 0.14);
+  --scrim: rgba(17, 22, 30, 0.26);
+  --shadow-raised: 0 1px 2px rgba(17, 22, 30, 0.05);
+
+  --doc-rule: #e5e7eb;
+  --doc-rule-strong: #cbd0d8;
+  --doc-wash: rgba(33, 36, 42, 0.04);
+
+  --code-surface: #f4f5f7;
+  --code-line: #e3e6ea;
+  --code-wash: rgba(33, 36, 42, 0.07);
+
+  --code-keyword: #8e3a66;
+  --code-string: #2f6b45;
+  --code-number: #8a5620;
+  --code-function: #2a5f97;
+  --code-type: #5f47a3;
+  --code-variable: #1f6b6b;
+}
+
+/* High Contrast. The warm palette pushed as far apart as it goes: near black ink on near white
+   paper, borders you can see across a room, and a scrim that actually dims. Not a separate design,
+   which is the point of it, so that somebody who needs the contrast does not also have to accept a
+   different looking app. */
+:root[data-theme="contrast"],
+.theme-swatch[data-theme="contrast"] {
+  color-scheme: light;
+
+  --paper: #fffdf7;
+  --shell: #f3ede0;
+  --sidebar: #eee7d7;
+  --raised: #fffefa;
+
+  --ink: #16130d;
+  --ink-soft: #443d31;
+  --ink-faint: #675e4d;
+
+  --line: #cdc4ad;
+  --line-strong: #a89c80;
+
+  --accent: #1a170f;
+  --accent-ink: #000000;
+  --accent-wash: rgba(26, 23, 15, 0.12);
+  --accent-contrast: #fffdf7;
+  --selection: rgba(26, 23, 15, 0.22);
+  --glass: rgba(255, 253, 247, 0.92);
+
+  --danger: #98261a;
+  --danger-ink: #781c11;
+  --danger-wash: rgba(152, 38, 26, 0.12);
+  --danger-contrast: #fffdf7;
+
+  --shadow-page: 0 1px 2px rgba(26, 23, 15, 0.1), 0 14px 30px rgba(26, 23, 15, 0.14);
+  --shadow-pop: 0 8px 24px rgba(26, 23, 15, 0.2);
+  --scrim: rgba(26, 23, 15, 0.36);
+  --shadow-raised: 0 1px 2px rgba(26, 23, 15, 0.08);
+
+  --doc-rule: #cdc4ad;
+  --doc-rule-strong: #9c9075;
+  --doc-wash: rgba(26, 23, 15, 0.06);
+
+  --code-surface: #f1ebda;
+  --code-line: #d8ceb5;
+  --code-wash: rgba(26, 23, 15, 0.1);
+
+  --code-keyword: #7a1f45;
+  --code-string: #2f5514;
+  --code-number: #7a3f06;
+  --code-function: #17456e;
+  --code-type: #4a2b80;
+  --code-variable: #0d4f48;
+}
+
+/* Graphite. Flat neutral charcoal with no temperature at all, the counterpart to Mist. Every
+   surface is a step on one grey ramp and the accent is off white, so the only colour on screen is
+   whatever is inside a code block. */
+:root[data-theme="graphite"],
+.theme-swatch[data-theme="graphite"] {
+  color-scheme: dark;
+
+  --paper: #1f1f1f;
+  --shell: #171717;
+  --sidebar: #1b1b1b;
+  --raised: #262626;
+
+  --ink: #e4e4e4;
+  --ink-soft: #a5a5a5;
+  --ink-faint: #7b7b7b;
+
+  --line: #2e2e2e;
+  --line-strong: #3f3f3f;
+
+  --accent: #e8e8e8;
+  --accent-ink: #ffffff;
+  --accent-wash: rgba(232, 232, 232, 0.11);
+  --accent-contrast: #1b1b1b;
+  --selection: rgba(232, 232, 232, 0.18);
+  --glass: rgba(31, 31, 31, 0.88);
+
+  --danger: #dc7d72;
+  --danger-ink: #e79288;
+  --danger-wash: rgba(220, 125, 114, 0.16);
+  --danger-contrast: #1b1b1b;
+
+  --shadow-page: 0 1px 2px rgba(0, 0, 0, 0.4), 0 14px 34px rgba(0, 0, 0, 0.5);
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.55);
+  --scrim: rgba(0, 0, 0, 0.52);
+  --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.35);
+
+  --doc-rule: #303030;
+  --doc-rule-strong: #474747;
+  --doc-wash: rgba(228, 228, 228, 0.035);
+
+  --code-surface: #262626;
+  --code-line: #363636;
+  --code-wash: rgba(228, 228, 228, 0.06);
+
+  --code-keyword: #dd8ba4;
+  --code-string: #a6c58c;
+  --code-number: #d9ac7e;
+  --code-function: #8fb4d8;
+  --code-type: #b9a3dd;
+  --code-variable: #83c3b9;
+}
+
+/* Midnight. Deep near black with a cool cast and one saturated accent, which is the whole idea:
+   the app is unlit apart from the thing you are meant to act on. The accent is bright enough to
+   read as text on the page, so what sits on top of it when it is a button is the paper colour and
+   not white, and the selection is the accent again at a strength you can see a sentence through. */
+:root[data-theme="midnight"],
+.theme-swatch[data-theme="midnight"] {
+  color-scheme: dark;
+
+  --paper: #0f1218;
+  --shell: #090b0f;
+  --sidebar: #0c0f14;
+  --raised: #171b23;
+
+  --ink: #e6e9f0;
+  --ink-soft: #a3aab8;
+  --ink-faint: #767e8e;
+
+  --line: #1f2530;
+  --line-strong: #2e3542;
+
+  --accent: #6f8dff;
+  --accent-ink: #9db1ff;
+  --accent-wash: rgba(111, 141, 255, 0.16);
+  --accent-contrast: #0a0d14;
+  --selection: rgba(111, 141, 255, 0.26);
+  --glass: rgba(15, 18, 24, 0.88);
+
+  --danger: #ff7d73;
+  --danger-ink: #ff958d;
+  --danger-wash: rgba(255, 125, 115, 0.16);
+  --danger-contrast: #0a0d14;
+
+  --shadow-page: 0 1px 2px rgba(0, 0, 0, 0.5), 0 14px 34px rgba(0, 0, 0, 0.62);
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.66);
+  --scrim: rgba(2, 4, 8, 0.6);
+  --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.45);
+
+  --doc-rule: #232a36;
+  --doc-rule-strong: #333c4c;
+  --doc-wash: rgba(230, 233, 240, 0.035);
+
+  --code-surface: #151a23;
+  --code-line: #242c39;
+  --code-wash: rgba(230, 233, 240, 0.06);
+
+  --code-keyword: #ee8ba4;
+  --code-string: #9fd79b;
+  --code-number: #efb083;
+  --code-function: #86b0f5;
+  --code-type: #c1a4f0;
+  --code-variable: #8ed9cd;
+}
+
+/* The picker's preview tiles.
+ *
+ * A palette block above only ever matches the root element, because that is the one element
+ * data-theme is ever set on, so a tile drawn inside the picker cannot inherit the palette it is
+ * previewing. Adding the tile's own selector to each block is what makes the preview honest: it is
+ * the theme's real surfaces, not six hexes written a second time to look like them.
+ *
+ * Light and dark are the exception and they are the reason this block exists. Their palettes are in
+ * margin-shared, which this repo may not reach into, so the six colours their tiles draw are copied
+ * here and are the only copied colours in the file. Six rather than thirty five because a tile is a
+ * sidebar, a page, two lines of text and one accent, and nothing else. */
+.theme-swatch[data-theme="light"] {
+  --paper: #fcfbf7;
+  --shell: #f1ece2;
+  --sidebar: #ece6da;
+  --ink: #23201b;
+  --line: #e3ddce;
+  --accent: #2a2622;
+}
+
+.theme-swatch[data-theme="dark"] {
+  --paper: #1d1a16;
+  --shell: #151310;
+  --sidebar: #1a1713;
+  --ink: #ece6da;
+  --line: #2c2823;
+  --accent: #efe9dc;
+}

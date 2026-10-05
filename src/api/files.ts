@@ -3,6 +3,16 @@ import { call, type AssetResult, type FileNode, type ReadResult, type WriteResul
 export const fileRead = (path: string) => call<ReadResult>("file_read", { path });
 
 /**
+ * The whole file as bytes, for the picture and PDF viewers. Nothing that reads this way can write:
+ * there is no timestamp coming back and no counterpart command to hand one to.
+ *
+ * `ArrayBuffer` rather than `number[]` because the Rust side answers with a raw body, the way the
+ * PDF compiler does. A file past the backend's ceiling is a rejection with a sentence in it rather
+ * than a window that stops responding while sixty four megabytes are encoded as JSON.
+ */
+export const fileBytes = (path: string) => call<ArrayBuffer>("file_bytes", { path });
+
+/**
  * Writes through a temporary file and a rename, so a crash mid-write leaves the old document
  * whole. Pass the `modifiedMs` the buffer was read at: if the file has moved on since, nothing is
  * written and the result comes back with `conflict`.

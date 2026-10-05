@@ -165,6 +165,9 @@ async function open(page: Page, source: string): Promise<void> {
     localStorage.setItem("margindocs-recents", JSON.stringify(["/Users/you/Documents/Handbook"]));
   });
   await page.goto("/");
+  // The app opens on the start screen now, whatever the backend still had open, so the folder is
+  // chosen off the recents list seeded above before there is a tree to click a file in.
+  await page.locator(".start-row").first().click();
   await expect(page.locator(row(HANDBOOK))).toBeVisible();
   await page.locator(row(README)).click();
   await expect(page.locator(".prose")).toBeVisible();

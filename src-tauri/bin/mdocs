@@ -1,0 +1,73 @@
+#!/bin/sh
+# Opens one Markdown file in Margin Docs. Installed as /usr/local/bin/mdocs, a symlink to this file
+# inside the app bundle, so the app it opens is always the one it shipped in.
+
+usage() {
+  echo "usage: mdocs <file>"
+  echo "Opens a Markdown file (.md, .markdown, .mdown, .mkd, .mkdn) in Margin Docs."
+}
+
+fail() {
+  echo "mdocs: $1" >&2
+  exit 1
+}
+
+if [ $# -eq 0 ]; then
+  usage
+  exit 0
+fi
+
+case "$1" in
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  --) shift ;;
+  -?*)
+    echo "mdocs: unknown option: $1" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
+
+if [ $# -ne 1 ]; then
+  echo "mdocs: expected one file, got $#" >&2
+  usage >&2
+  exit 2
+fi
+
+file=$1
+case "$file" in
+  /*) ;;
+  *) file="$PWD/$file" ;;
+esac
+
+[ -e "$file" ] || fail "no such file: $1"
+[ -d "$file" ] && fail "$1 is a folder, not a Markdown file"
+[ -f "$file" ] || fail "$1 is not a regular file"
+
+name=${file##*/}
+ext=""
+case "$name" in
+  ?*.*) ext=$(printf '%s' "${name##*.}" | tr '[:upper:]' '[:lower:]') ;;
+esac
+case "$ext" in
+  md | markdown | mdown | mkd | mkdn) ;;
+  *) fail "$1 is not a Markdown file (.md, .markdown, .mdown, .mkd, .mkdn)" ;;
+esac
+
+self=$0
+while [ -L "$self" ]; do
+  target=$(readlink "$self")
+  case "$target" in
+    /*) self=$target ;;
+    *) self="$(dirname "$self")/$target" ;;
+  esac
+done
+app=$(cd "$(dirname "$self")/../../.." 2> /dev/null && pwd -P)
+case "$app" in
+  *.app) ;;
+  *) fail "cannot find Margin Docs; install the command again from the app" ;;
+esac
+
+exec /usr/bin/open -a "$app" "$file"

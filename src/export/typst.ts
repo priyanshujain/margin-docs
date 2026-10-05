@@ -23,6 +23,7 @@
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import type { ImageInput } from "../ipc";
 import { resolveRelative } from "../links";
+import { isDocumentColor } from "../model/colors";
 import { DEFAULT_FONTS, fontFamilyName, type DocumentFonts } from "../model/fonts";
 import { CALLOUT_LABELS, calloutKindFromLabel, type CalloutKind } from "../model/doc";
 
@@ -109,7 +110,16 @@ export function str(value: string): string {
   return `${out}"`;
 }
 
-/** A colour from the table below, never from the document. */
+/**
+ * A colour from the table below, or one of the two a document carries.
+ *
+ * The document's own colours arrive here having been proved to be six hex digits and a hash, by
+ * `isDocumentColor`, which is the same gate the markdown bridge writes them through. That check is
+ * about the file rather than about this module: nothing a document can put in that attribute could
+ * escape `str` anyway, since a Typst string literal has no syntax inside it, so what a bad value
+ * would cost is a compile error rather than an injection. Refusing it here means the export leaves
+ * the colour off and still produces a PDF.
+ */
 function hex(value: string): string {
   return `rgb(${str(value)})`;
 }
@@ -394,13 +404,25 @@ function diagramPath(ctx: Context, svg: string): string {
 function marked(node: ProseMirrorNode, body: string): string {
   let out = body;
   // Code is innermost and the emphasis goes around it, which is the direction src/markdown's
-  // serializer already picked for the same flat mark set.
+  // serializer already picked for the same flat mark set. The two colours are the same order one
+  // step further out, `MARK_ORDER` for `MARK_ORDER`'s reason: the export is the document as the
+  // editor draws it, and both of those are the nesting the file holds.
   if (node.marks.some((m) => m.type.name === "em")) out = `#emph[${out}]`;
   if (node.marks.some((m) => m.type.name === "strong")) out = `#strong[${out}]`;
   if (node.marks.some((m) => m.type.name === "strikethrough")) out = `#strike[${out}]`;
+  const color = markColor(node, "textColor");
+  if (color) out = `#text(fill: ${hex(color)})[${out}]`;
+  const highlight = markColor(node, "highlight");
+  if (highlight) out = `#highlight(fill: ${hex(highlight)})[${out}]`;
   const href = node.marks.find((m) => m.type.name === "link")?.attrs.href;
   if (typeof href === "string" && href) out = `#link(${str(href)})[${out}]`;
   return out;
+}
+
+/** The hex one of the two colour marks carries, or null when it is not on this leaf. */
+function markColor(node: ProseMirrorNode, name: string): string | null {
+  const color = node.marks.find((m) => m.type.name === name)?.attrs.color;
+  return isDocumentColor(color) ? color : null;
 }
 
 function inline(ctx: Context, node: ProseMirrorNode): string {

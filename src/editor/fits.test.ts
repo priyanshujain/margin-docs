@@ -72,7 +72,8 @@ import { CellSelection, TableMap } from "@tiptap/pm/tables";
 import { dropPoint } from "@tiptap/pm/transform";
 import { EditorView } from "@tiptap/pm/view";
 import { parseMarkdown, serializeMarkdown } from "../markdown";
-import { createCommands, createEditorProps, createFind } from "./Editor";
+import { outlineOf } from "../model/outline";
+import { createCommands, createEditorProps, createFind, createOutline } from "./Editor";
 import { createEditorExtensions } from "./extensions";
 import { pasteKey } from "./paste";
 import type { EditorHandle } from "./index";
@@ -821,7 +822,23 @@ function pastePlain(editor: Editor, text: string): void {
 
 const ENTRIES: Entry[] = [
   { name: "focus", family: "focus", command: "focus", run: (_e, h) => h.focus() },
+  // The blank page under the document, which is a press on the shell rather than a command anybody
+  // reaches for, and which appends a paragraph when the last block of the file cannot hold a caret.
+  // It is in the focus family rather than among the inserts because an empty paragraph is nothing to
+  // the serializer: the row's own assertion is that every source in this matrix comes back byte
+  // identical afterwards, and that is exactly the claim being made for it.
+  { name: "focusEnd", family: "focus", command: "focusEnd", run: (_e, h) => h.focusEnd() },
   { name: "toggleMark", family: "mark", command: "toggleMark", run: (_e, h) => h.toggleMark("strong") },
+  // The mark family and not the link one, which is the whole difference between a swatch and the
+  // Link tool: these add a mark and nothing else, where that one can insert the url as text first.
+  //
+  // Only the setting halves are rows. Passing null is a removal, and every source in this file is
+  // plain markdown with no colour in it, so a removal cannot write anywhere and would fail the
+  // "act" half of every context that expects a mark to land. That is the command being right rather
+  // than the guard being missing: a removal can only reach text the setting row has already proved
+  // this command can reach.
+  { name: "setTextColor", family: "mark", command: "setTextColor", run: (_e, h) => h.setTextColor("#c4453a") },
+  { name: "setHighlight", family: "mark", command: "setHighlight", run: (_e, h) => h.setHighlight("#e8c86a") },
   { name: "setLink", family: "link", command: "setLink", run: (_e, h) => h.setLink("https://x.test") },
   { name: "setBlock(paragraph)", family: "paragraph", command: "setBlock", run: (_e, h) => h.setBlock("paragraph") },
   { name: "setBlock(bulletList)", family: "wrap", command: "setBlock", run: (_e, h) => h.setBlock("bulletList") },
@@ -958,10 +975,14 @@ const FOREIGN_CHORDS: Record<string, string[]> = {
   undoRedo: ["Mod-y", "Mod-z", "Mod-я", "Shift-Mod-z", "Shift-Mod-я"],
   // StarterKit's list backspace and delete handling.
   listKeymap: ["Backspace", "Delete", "Mod-Backspace", "Mod-Delete", "Tab"],
-  // src/editor/blocks/tables.ts: the cell walk, and the two deletions inside a table.
-  tables: ["Backspace", "Delete", "Shift-Tab", "Tab"],
+  // src/editor/blocks/tables.ts: the cell walk along a row and down a column, the way out of the
+  // table under its last row, and the two deletions inside one.
+  tables: ["ArrowDown", "ArrowUp", "Backspace", "Delete", "Enter", "Shift-Tab", "Tab"],
   // src/editor/blocks/math.ts: Enter out of a formula field.
   mathRendering: ["Enter"],
+  // src/editor/blocks/code.ts: the way out of a fence with nothing at all beyond it, which is the
+  // one thing the browser cannot do for a block that ends the document.
+  codeHighlighting: ["ArrowDown", "ArrowUp"],
 };
 
 /**
@@ -1171,6 +1192,15 @@ describe("the entry points, enumerated", () => {
       "replaceCurrent",
       "setQuery",
     ]);
+    editor.destroy();
+  });
+
+  // The outline is the third handle, and nothing on it writes. It is listed for the same reason the
+  // find bar's is, and what it gets beside this list is the describe at the end of the file: the
+  // one method moves the caret, and the bytes are asserted unchanged around it.
+  it("covers every method the outline handle offers", () => {
+    const { editor } = editorFor();
+    expect(Object.keys(createOutline(editor)).sort()).toEqual(["reveal"]);
     editor.destroy();
   });
 
@@ -1861,5 +1891,44 @@ describe("replacing text", () => {
       expect([replacement, count(reread.doc, "raw")]).toEqual([replacement, count(editor.state.doc, "raw")]);
       editor.destroy();
     });
+  });
+});
+
+// The outline's one entry point, which is a navigation and not an edit, asserted on the bytes like
+// everything else here. It runs headless, so what is proved is the half that reaches the document:
+// the caret lands inside the heading that was asked for, a position that does not start a heading
+// is declined rather than guessed at, and nothing is written either way. The scroll is a browser's
+// business and tests/outline.spec.ts has one.
+describe("reveal, the outline's one entry point", () => {
+  const SOURCE = "intro\n\n# One\n\ntext\n\n## Two\n\nmore\n";
+
+  it("puts the caret in the heading and writes nothing", () => {
+    const { editor, written } = open(SOURCE);
+    const before = written();
+    const [, two] = outlineOf(editor.state.doc);
+
+    createOutline(editor).reveal(two.pos);
+
+    const { $from } = editor.state.selection;
+    expect($from.parent.type.name).toBe("heading");
+    expect($from.parent.textContent).toBe("Two");
+    expect(written()).toBe(before);
+    editor.destroy();
+  });
+
+  it("declines a position that is not the start of a heading", () => {
+    const { editor, written } = open(SOURCE);
+    const before = written();
+    const was = editor.state.selection;
+    const outline = createOutline(editor);
+
+    // Inside the first paragraph, before the document, and past the end of it.
+    outline.reveal(1);
+    outline.reveal(-1);
+    outline.reveal(editor.state.doc.content.size + 10);
+
+    expect(editor.state.selection.eq(was)).toBe(true);
+    expect(written()).toBe(before);
+    editor.destroy();
   });
 });

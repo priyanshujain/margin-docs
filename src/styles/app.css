@@ -87,9 +87,15 @@ select {
 }
 
 /* The traffic lights float over this row. macOS is the only target, but the lane still opens off
-   an attribute rather than unconditionally, so main.tsx stays the one place that decides. */
-:root[data-traffic] .titlebar {
-  padding-left: var(--traffic-pad);
+   an attribute rather than unconditionally, so main.tsx stays the one place that decides.
+
+   The lane is a margin on the first control and not padding on the row, so that the row's two
+   outer columns stay the same width and the filename between them stays centred on the window
+   rather than on what is left of it. Padding here put the title 35px right of the middle, which is
+   not where macOS centres a window's title and not where anybody looking at the window expects to
+   find it. */
+:root[data-traffic] .titlebar .lead {
+  margin-left: calc(var(--traffic-pad) - 14px);
 }
 
 .titlebar .lead {
@@ -466,11 +472,15 @@ select {
   overflow: hidden;
 }
 
+/* 16px on the closing end rather than 22px, because what sits there is an .icon-button and a
+   28px button carries its 16px glyph 6px in from its own edge. 16 and 6 put the cross on the same
+   right edge as the body's text and the footer's buttons; 22 would put it two pixels past them,
+   which is exactly far enough to see and not far enough to explain. */
 .panel-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 14px 16px 22px;
+  padding: 16px 16px 16px 22px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -512,7 +522,7 @@ select {
   top: 36px;
   right: 0;
   z-index: 30;
-  min-width: 156px;
+  min-width: 168px;
   display: flex;
   flex-direction: column;
   padding: 5px;
@@ -522,9 +532,19 @@ select {
   box-shadow: var(--shadow-pop);
 }
 
+/* A 14px mark and a label. Both menus that hang off the title bar are built on this row, so their
+   labels stand on one left edge and the two read as the same object opened twice: the mark is the
+   glyph for an action in the More menu and the tick on the applied width in the other. */
 .menu button {
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  align-items: center;
+  gap: 9px;
   text-align: left;
-  padding: 8px 11px;
+  /* A menu is as wide as its longest row. Wrapping one label over two lines to keep a menu narrow
+     costs more than the width it saves, and turns a list of rows into a list of paragraphs. */
+  white-space: nowrap;
+  padding: 7px 11px;
   border-radius: var(--r-sm);
   font-family: var(--font-ui);
   font-size: var(--t-3);
@@ -538,6 +558,18 @@ select {
 
 .menu button[data-on="true"] {
   color: var(--accent);
+}
+
+/* Quieter than the label it sits beside, the way the glyph on a tree row is, so a column of them
+   reads as a margin down the side of the menu rather than as eight competing pictures. */
+.menu-item svg {
+  color: var(--ink-faint);
+  transition: color 120ms var(--ease);
+}
+
+.menu-item:hover svg,
+.menu-item:focus-visible svg {
+  color: var(--ink-soft);
 }
 
 .menu-label {
@@ -601,7 +633,7 @@ select {
   transition: background 120ms var(--ease), color 120ms var(--ease);
 }
 
-.tool:hover {
+.tool:hover:not(:disabled) {
   background: var(--accent-wash);
   color: var(--ink);
 }
@@ -609,6 +641,20 @@ select {
 .tool[data-on="true"] {
   background: var(--accent);
   color: var(--accent-contrast);
+}
+
+/* A tool the caret cannot use goes quiet in place rather than disappearing. AppFlowy filters its
+   items out instead, which it can afford because its toolbar is summoned by a selection; ours is a
+   fixed row that is already full, so a control vanishing wherever a document happened to put the
+   caret would shift every other control under the user's hand.
+   Last of the four rules, and it clears the pressed fill as well as the ink, because a tool can be
+   both the block the caret is in and a conversion this position refuses. The hover above is
+   narrowed for the same reason: lighting a button that will decline the press is the lie these two
+   rules exist to stop telling. */
+.tool:disabled {
+  background: none;
+  color: var(--ink-faint);
+  cursor: default;
 }
 
 .tool-sep {

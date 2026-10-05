@@ -107,14 +107,6 @@
   color: var(--ink-faint);
 }
 
-.palette-root {
-  flex: none;
-  font-size: var(--t-1);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-}
-
 .palette-line {
   flex: none;
   font-family: var(--font-mono);

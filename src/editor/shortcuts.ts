@@ -9,9 +9,11 @@
 // "## " becomes a heading and the hashes are gone, "**bold**" becomes bold and the stars are gone.
 // That is the same WYSIWYG promise the rest of the editor makes, arrived at from the keyboard.
 //
-// Cmd+K is deliberately absent. src/keys/bindings.ts binds it globally to the command palette from
-// a capture-phase listener, so a link shortcut on that chord would never see the key. Links are a
-// toolbar control.
+// Cmd+K is deliberately absent from this file and is not absent from the app: src/keys/bindings.ts
+// binds it in the document context to "insert-link" and src/editor/Toolbar.tsx subscribes to that
+// command, because what the chord opens is the pill's link popover and a chord answered from a
+// capture-phase listener is a chord this extension would never see anyway. Links are a toolbar
+// control; the key is the keymap's.
 
 import {
   Extension,
@@ -27,6 +29,7 @@ import { isInTable } from "@tiptap/pm/tables";
 import { HEADING_LEVELS } from "../model/schema";
 import type { MarkName } from "../model/schema";
 import { breakable, change, fits } from "./fits";
+import { isolatingLine } from "./lines";
 
 const STAR_BOLD = /(?:^|\s)(\*\*(?!\s+\*\*)((?:[^*]+))\*\*(?!\s+\*\*))$/;
 const UNDERSCORE_BOLD = /(?:^|\s)(__(?!\s+__)((?:[^_]+))__(?!\s+__))$/;
@@ -122,10 +125,22 @@ export const Shortcuts = Extension.create({
     // the file does not care which of the two the user reached for. Mod-Alt-2 in a raw block
     // rewrote the user's html as an escaped heading, and Mod-Alt-0 in a toggle deleted the toggle
     // and its title, both of them while the toolbar items beside them were being fixed.
+    //
+    // And the line the caret is on comes out of a wrapped block before the conversion, the same
+    // step the toolbar's heading items take and for the reason src/editor/lines.ts gives. The chord
+    // toggles, so which block the line is about to become is read off the block it is in now.
+    const { heading, paragraph } = editor.schema.nodes;
     const headings = Object.fromEntries(
       HEADING_LEVELS.map((level) => [
         `Mod-Alt-${level}`,
-        () => change(editor, "convert", (chain) => chain.toggleNode("heading", "paragraph", { level })),
+        () => {
+          const back = editor.isActive("heading", { level });
+          return change(editor, "convert", (chain) =>
+            chain
+              .command(back ? isolatingLine(paragraph) : isolatingLine(heading, { level }))
+              .toggleNode("heading", "paragraph", { level }),
+          );
+        },
       ]),
     );
 
@@ -136,7 +151,8 @@ export const Shortcuts = Extension.create({
       "Mod-e": mark("code"),
       "Mod-Shift-x": mark("strikethrough"),
 
-      "Mod-Alt-0": () => change(editor, "convert", (chain) => chain.setNode("paragraph")),
+      "Mod-Alt-0": () =>
+        change(editor, "convert", (chain) => chain.command(isolatingLine(paragraph)).setNode("paragraph")),
       "Mod-Shift-7": () => change(editor, "wrap", (chain) => chain.toggleList("orderedList", "listItem")),
       "Mod-Shift-8": () => change(editor, "wrap", (chain) => chain.toggleList("bulletList", "listItem")),
       "Mod-Shift-9": () => change(editor, "wrap", (chain) => chain.toggleList("taskList", "taskItem")),

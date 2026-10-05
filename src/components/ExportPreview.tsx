@@ -26,37 +26,10 @@ import { useEscapeLayer } from "../escape";
 import { compile, save, suggestedName, type CompiledPdf } from "../export/run";
 import { onCommand } from "../keys/commands";
 import { useKeyContext } from "../keys/keymap";
+import { loadPdfjs, type Pdfjs } from "../pdfjs";
 import { useDocument } from "../store/useDocument";
 import { notify } from "../store/useToast";
 import { Icon } from "./Icon";
-
-/**
- * pdf.js, fetched the first time somebody previews something and kept for every preview after.
- *
- * Imported here rather than at the top of the file because it is a megabyte and a half of reader
- * and a separate worker, and an editor that has not been asked for a PDF has no use for either. It
- * is the same call mermaid gets in src/export/typst.ts, for the same reason. The types above are
- * `import type` and cost nothing: they are erased before anything runs.
- *
- * The worker is a bundled asset URL rather than a path, so the bundler emits it and the app's CSP
- * sees it as its own origin. `worker-src 'self' blob:` in tauri.conf.json is what lets pdf.js
- * start it at all.
- */
-type Pdfjs = typeof import("pdfjs-dist");
-
-let reader: Promise<Pdfjs> | null = null;
-
-function loadPdfjs(): Promise<Pdfjs> {
-  reader ??= (async () => {
-    const [pdfjs, worker] = await Promise.all([
-      import("pdfjs-dist"),
-      import("pdfjs-dist/build/pdf.worker.min.mjs?url"),
-    ]);
-    pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
-    return pdfjs;
-  })();
-  return reader;
-}
 
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 3;

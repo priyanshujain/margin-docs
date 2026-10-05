@@ -40,9 +40,25 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown"],
+        "contentTypes": ["net.daringfireball.markdown"],
+        "name": "Markdown Document",
+        "role": "Editor"
+      },
+      {
+        "ext": ["md", "markdown", "mdown", "mkd", "mkdn"],
+        "name": "Markdown Document",
+        "role": "Editor"
+      }
+    ],
     "macOS": {
       "minimumSystemVersion": "10.15",
-      "hardenedRuntime": true
+      "hardenedRuntime": true,
+      "files": {
+        "Resources/bin/mdocs": "bin/mdocs"
+      }
     }
   }
 }

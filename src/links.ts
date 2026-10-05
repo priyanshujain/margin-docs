@@ -7,15 +7,24 @@
 // into the same history the back and forward commands walk.
 //
 // Everything else is the system's: an http link goes to the browser, and a relative link to a file
-// this editor does not open goes to whatever macOS opens it with. Nothing here writes anything, and
-// a link to a file that is not there is a toast rather than a new file.
+// this app can neither edit nor show goes to whatever macOS opens it with. A picture or a PDF lands
+// in the read only viewer instead of Preview, which is a navigation like any other except that
+// there is nothing to come back to it dirty. Nothing here writes anything, and a link to a file
+// that is not there is a toast rather than a new file.
+//
+// A window holding one document on its own has no folder to navigate in, so a document it links to
+// opens in a window of its own and a picture goes to the system rather than replacing the only
+// document the window has.
 
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { openExternal } from "./api/roots";
 import { isTauri } from "./ipc";
-import { documentKindForPath } from "./model/doc";
+import { documentKindForPath, openKindForPath } from "./model/doc";
 import { useDocument } from "./store/useDocument";
 import { notify } from "./store/useToast";
+import { useViewer } from "./store/useViewer";
+import { useWindow } from "./store/useWindow";
+import { followDocument, openDocumentHere } from "./windows";
 
 const dirName = (path: string): string => path.slice(0, path.lastIndexOf("/")) || "/";
 
@@ -103,12 +112,20 @@ export function openLink(href: string): void {
   const target = resolveRelative(from, href);
   if (target === null) return;
 
-  if (documentKindForPath(target) === null) {
+  const kind = documentKindForPath(target);
+  if (kind === "markdown") {
+    followDocument(target).catch((e) => notify(`Could not open ${target}: ${String(e)}`));
+    return;
+  }
+  if (openKindForPath(target) === null || useWindow.getState().standalone) {
     openExternal(target).catch((e) => notify(`Could not open ${target}: ${String(e)}`));
     return;
   }
-  useDocument
-    .getState()
-    .open(target)
-    .catch((e) => notify(`Could not open ${target}: ${String(e)}`));
+  // The picture at the end of an `![](assets/shot.png)` opens here now rather than in Preview.
+  // Nothing about it is written back, so this is still the read only half of following a link.
+  if (kind === null) {
+    useViewer.getState().open(target);
+    return;
+  }
+  openDocumentHere(target).catch((e) => notify(`Could not open ${target}: ${String(e)}`));
 }

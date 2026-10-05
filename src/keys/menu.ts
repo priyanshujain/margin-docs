@@ -20,6 +20,7 @@ export const MENU_IDS: readonly CommandId[] = [
   "quick-open",
   "command-palette",
   "toggle-sidebar",
+  "toggle-outline",
   "check-updates",
   "report-issue",
   "writing-proofread",

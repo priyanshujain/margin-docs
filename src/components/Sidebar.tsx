@@ -1,13 +1,16 @@
-// Every open folder, one tree each. This component owns everything that spans roots: which row is
-// selected, which row holds the tab stop, the arrow-key walk over the visible rows, the drag
-// gesture and the menus. FileTree.tsx below it only draws.
+// The open folder, one tree. This component owns everything that is about the tree as a whole:
+// which row is selected, which row holds the tab stop, the arrow-key walk over the visible rows,
+// the drag gesture and the menus. FileTree.tsx below it only draws.
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
 import { openExternal } from "../api/roots";
 import { commandLabel, runCommand } from "../keys/commands";
+import { viewerKindForPath } from "../model/doc";
 import { useDocument } from "../store/useDocument";
 import { notify } from "../store/useToast";
+import { useViewer } from "../store/useViewer";
 import { useWorkspace, type TreeNode } from "../store/useWorkspace";
+import { openDocumentHere } from "../windows";
 import { movePath } from "../workspace";
 import { ConfirmDialog } from "./ConfirmDialog";
 import {
@@ -25,19 +28,21 @@ import { RowMenuAt, type RowMenuEntry } from "./RowMenu";
 import { shortcutTitle } from "./Titlebar";
 
 const EXPANDED_KEY = "margindocs-expanded";
-const ROOTS_SEEN_KEY = "margindocs-roots-seen";
 
 /** How far the pointer travels before a press on a row becomes a drag rather than a click. */
 const DRAG_SLOP = 4;
 /** How long a drag hovers a closed folder before it springs open, the way Finder does. */
 const SPRING_MS = 650;
 
-const OPEN_FOLDER = "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z M12 10v6 M9 13h6";
+// A folder with its flap out, which is the app's one picture of Open Folder: the closed
+// folder with a cross in it belongs to New Folder, and this button is not that.
+const OPEN_FOLDER = "M3 19V7a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v2 M3 19l2.9-8h15.3l-2.9 8z";
 const NEW_DOC_ICON = "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z M14 3v5h5 M12 12v5 M9.5 14.5h5";
 const NEW_FOLDER_ICON = "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z M12 11v6 M9 14h6";
 const RENAME_ICON = "M4 20h4L20 8l-4-4L4 16z M14 6l4 4";
 const DUPLICATE_ICON = "M9 9h11v11H9z M6 15V5h9";
 const REVEAL_ICON = "M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4 M15 3h6v6 M10 14L21 3";
+const OPEN_OUTSIDE_ICON = "M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z M3 9h18 M6 6h.01";
 const COPY_PATH_ICON = "M8 4h8a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z M9 2h6v4H9z";
 const TRASH_ICON = "M5 7h14M10 7V5h4v2M7 7l1 13h8l1-13M10 11v6M14 11v6";
 const CLOSE_ICON = "M18 6L6 18M6 6l12 12";
@@ -108,21 +113,24 @@ const sameDrop = (a: DropTarget | null, b: DropTarget | null): boolean =>
   a?.dir === b?.dir && a?.mode === b?.mode && a?.row === b?.row;
 
 export function Sidebar() {
-  const roots = useWorkspace((s) => s.roots);
+  const root = useWorkspace((s) => s.root);
   const expanded = useWorkspace((s) => s.expanded);
   const selectedPath = useWorkspace((s) => s.selectedPath);
-  const scanPhase = useWorkspace((s) => s.scanPhase);
   const select = useWorkspace((s) => s.select);
   const toggleExpanded = useWorkspace((s) => s.toggleExpanded);
-  const newDocument = useWorkspace((s) => s.newDocument);
   const newFolder = useWorkspace((s) => s.newFolder);
   const renameEntry = useWorkspace((s) => s.renameEntry);
   const duplicateEntry = useWorkspace((s) => s.duplicateEntry);
   const deleteEntry = useWorkspace((s) => s.deleteEntry);
   const revealInFinder = useWorkspace((s) => s.revealInFinder);
   const closeFolder = useWorkspace((s) => s.closeFolder);
-  const openDocument = useDocument((s) => s.open);
-  const openPath = useDocument((s) => s.path);
+  const documentPath = useDocument((s) => s.path);
+  const viewFile = useViewer((s) => s.open);
+  const viewedPath = useViewer((s) => s.path);
+
+  // One of the two is always null: opening either closes the other. The row that is drawn as the
+  // current one is whichever of them the pane is actually showing.
+  const openPath = documentPath ?? viewedPath;
 
   const [hydrated, setHydrated] = useState(false);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
@@ -148,19 +156,6 @@ export function Sidebar() {
     writeList(EXPANDED_KEY, [...expanded]);
   }, [hydrated, expanded]);
 
-  // A folder the user has only just opened should show its contents. One that they opened months
-  // ago and then collapsed should stay collapsed, which is why "seen" is remembered separately
-  // rather than inferred from an empty expansion set.
-  useEffect(() => {
-    if (!hydrated) return;
-    const seen = readList(ROOTS_SEEN_KEY);
-    const fresh = roots.filter((r) => !seen.includes(r.path));
-    if (!fresh.length) return;
-    const already = useWorkspace.getState().expanded;
-    for (const root of fresh) if (!already.has(root.path)) toggleExpanded(root.path);
-    writeList(ROOTS_SEEN_KEY, [...seen, ...fresh.map((r) => r.path)]);
-  }, [hydrated, roots, toggleExpanded]);
-
   useEffect(
     () => () => {
       if (spring.current !== null) clearTimeout(spring.current);
@@ -168,21 +163,17 @@ export function Sidebar() {
     [],
   );
 
-  const rootNodes: TreeNode[] = useMemo(
+  const rootNode: TreeNode | null = useMemo(
     () =>
-      roots.map((root) => ({
-        path: root.path,
-        name: root.name,
-        isDir: true,
-        editable: false,
-        children: root.tree,
-      })),
-    [roots],
+      root === null
+        ? null
+        : { path: root.path, name: root.name, isDir: true, editable: false, children: root.tree },
+    [root],
   );
 
   const rows = useMemo(
-    () => rootNodes.flatMap((node) => flattenTree([node], expanded, 0, "")),
-    [rootNodes, expanded],
+    () => (rootNode === null ? [] : flattenTree([rootNode], expanded, 0, "")),
+    [rootNode, expanded],
   );
 
   const tabStopPath =
@@ -210,7 +201,14 @@ export function Sidebar() {
       return;
     }
     if (node.editable) {
-      openDocument(node.path).catch((e) => notify(`Could not open: ${String(e)}`));
+      openDocumentHere(node.path).catch((e) => notify(`Could not open: ${String(e)}`));
+      return;
+    }
+    // A picture or a PDF opens here, read only, rather than being handed to macOS. Open in Default
+    // App is still on the row menu, because a PDF somebody wants to annotate belongs in Preview and
+    // this app has no business standing in the way of that.
+    if (viewerKindForPath(node.path) !== null) {
+      viewFile(node.path);
       return;
     }
     openExternal(node.path).catch((e) => notify(`Could not open: ${String(e)}`));
@@ -325,15 +323,13 @@ export function Sidebar() {
     setContextMenu({ x: e.clientX, y: e.clientY, row });
   };
 
-  // Open first, then offer the rename: the editor takes focus as it mounts, and a rename field
-  // that opened before it would be blurred out from under the user mid-word.
-  const createDocument = (dir: string) => {
-    newDocument(dir)
-      .then((path) => {
-        select(path);
-        return openDocument(path).then(() => setRenamingPath(path));
-      })
-      .catch((e) => notify(`Could not create the document: ${String(e)}`));
+  // Nothing is created here any more. New Document opens the setup panel, which is where the name
+  // and the faces are chosen and the only thing that writes the file, so all a row has to do is
+  // say where: the selection is what `targetDir` in src/keys/commands.ts reads. Going through
+  // the command is also what keeps the sidebar and the title bar opening one panel rather than two.
+  const createDocument = (at: string) => {
+    select(at);
+    runCommand("new-doc");
   };
 
   const createFolder = (dir: string) => {
@@ -357,7 +353,12 @@ export function Sidebar() {
     const dir = node.isDir ? node.path : row.parentPath;
     const isRoot = !row.parentPath;
     const items: RowMenuEntry[] = [
-      { id: "new-doc", label: "New Document", icon: NEW_DOC_ICON, run: () => createDocument(dir) },
+      {
+        id: "new-doc",
+        label: "New Document",
+        icon: NEW_DOC_ICON,
+        run: () => createDocument(node.path),
+      },
       { id: "new-folder", label: "New Folder", icon: NEW_FOLDER_ICON, run: () => createFolder(dir) },
     ];
     if (!isRoot) {
@@ -384,6 +385,14 @@ export function Sidebar() {
       run: () =>
         revealInFinder(node.path).catch((e) => notify(`Could not reveal in Finder: ${String(e)}`)),
     });
+    if (!node.isDir)
+      items.push({
+        id: "open-outside",
+        label: "Open in Default App",
+        icon: OPEN_OUTSIDE_ICON,
+        run: () =>
+          openExternal(node.path).catch((e) => notify(`Could not open: ${String(e)}`)),
+      });
     items.push({ id: "copy-path", label: "Copy Path", icon: COPY_PATH_ICON, run: () => copyPath(node.path) });
     items.push("sep");
     if (isRoot)
@@ -391,7 +400,7 @@ export function Sidebar() {
         id: "close-folder",
         label: "Close Folder",
         icon: CLOSE_ICON,
-        run: () => closeFolder(node.path),
+        run: () => closeFolder(),
       });
     else
       items.push({
@@ -466,15 +475,16 @@ export function Sidebar() {
         </div>
 
         <div className="nav-scroll">
-          {rootNodes.map((node) => (
-            <div key={node.path} className="tree-section" data-root={node.path}>
-              <FileTree nodes={[node]} depth={0} parentPath="" state={view} handlers={handlers} />
+          {rootNode && (
+            <div className="tree-section" data-root={rootNode.path}>
+              <FileTree
+                nodes={[rootNode]}
+                depth={0}
+                parentPath=""
+                state={view}
+                handlers={handlers}
+              />
             </div>
-          ))}
-          {!rootNodes.length && (
-            <p className="sidebar-empty">
-              {scanPhase === "scanning" ? "Reading the folder…" : "No folder is open."}
-            </p>
           )}
         </div>
       </aside>

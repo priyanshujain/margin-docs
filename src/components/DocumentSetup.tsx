@@ -1,4 +1,13 @@
-// Document setup: the panel the filename in the title bar opens.
+// Document setup: the panel the filename in the title bar opens, and the panel New Document opens
+// before there is a document at all.
+//
+// One panel and not two, because the two gestures ask the same question. Naming a file and picking
+// the faces it is set in is the whole of what a document has to be set up with, and a new file has
+// to answer both before it exists rather than being created as Untitled.md and renamed afterwards.
+// The only thing creation mode changes is what Save does with the answers: `createIn` writes a new
+// file into that folder and opens it, and `path` renames and restyles the one already open.
+// Nothing is written in either mode until Save is pressed, so Escape out of a creation leaves the
+// folder exactly as it was found.
 //
 // The sibling book app puts the same thing behind the same gesture. Its title bar shows the book's
 // title, clicking it opens Book setup, and the faces the book is set in are a section of that
@@ -36,8 +45,12 @@ import { fontsListSystem } from "../api/fonts";
 import { useDocumentFonts } from "../store/useDocumentFonts";
 import { notify } from "../store/useToast";
 import { useWorkspace } from "../store/useWorkspace";
+import { openDocumentHere } from "../windows";
 import { splitExtension } from "./FileTree";
 import { Icon } from "./Icon";
+
+/** What a document is called when Save is pressed with the name field left empty. */
+const UNTITLED = "Untitled";
 
 /**
  * The machine's font book, asked once per launch and kept for every later open of this panel.
@@ -104,20 +117,47 @@ function FontSelect({
   );
 }
 
-export function DocumentSetup({ path, onClose }: { path: string; onClose: () => void }) {
+/** Renaming and restyling the document that is open, which is what the title bar asks for. */
+interface SetupProps {
+  path: string;
+  createIn?: never;
+  onClose: () => void;
+}
+
+/** Creating one, which is what New Document asks for. `createIn` is the folder it lands in. */
+interface CreateProps {
+  path?: never;
+  createIn: string;
+  onClose: () => void;
+}
+
+export function DocumentSetup(props: SetupProps | CreateProps) {
+  const onClose = props.onClose;
+  const creating = props.createIn !== undefined;
+
   const fonts = useDocumentFonts((s) => s.fonts);
   const setFonts = useDocumentFonts((s) => s.setFonts);
   const renameEntry = useWorkspace((s) => s.renameEntry);
+  const newDocument = useWorkspace((s) => s.newDocument);
+  const select = useWorkspace((s) => s.select);
 
-  const fileName = path.slice(path.lastIndexOf("/") + 1);
-  const { base, hidden } = splitExtension(fileName);
+  // A file that does not exist yet has no name to show and no faces of its own, so creation mode
+  // starts from the app's default pair rather than from whatever the last document was set in. A
+  // new document inheriting the open one's typography would be a choice nobody made.
+  const { base, hidden } =
+    props.path === undefined
+      ? { base: "", hidden: "" }
+      : splitExtension(props.path.slice(props.path.lastIndexOf("/") + 1));
 
-  const [draft, setDraft] = useState<Draft>(() => ({ name: base, fonts }));
+  const [draft, setDraft] = useState<Draft>(() => ({
+    name: base,
+    fonts: creating ? DEFAULT_FONTS : fonts,
+  }));
   const [system, setSystem] = useState<string[]>(() => systemFontCache ?? []);
   // Open on the two selects when the document is in a pair no preset names, because that is the
   // state somebody arrived at by using them and the panel should not hide the controls that got
   // them there.
-  const [advanced, setAdvanced] = useState(() => pairingFor(fonts) === null);
+  const [advanced, setAdvanced] = useState(() => !creating && pairingFor(fonts) === null);
   const nameRef = useRef<HTMLInputElement>(null);
 
   useEscapeLayer(true, onClose);
@@ -147,7 +187,40 @@ export function DocumentSetup({ path, onClose }: { path: string; onClose: () => 
   const activePreset = pairingFor(draft.fonts);
   const usesSystem = draft.fonts.body.kind === "system" || draft.fonts.heading.kind === "system";
 
+  /**
+   * The name to give the file, with markdown's own extension put back on.
+   *
+   * `splitExtension` is what the tree hides `.md` with, so a name typed with one already on it
+   * keeps the one it was given rather than becoming notes.md.md, and anything else typed after a
+   * dot is part of the name: a document called `v1.2 plan` is not a file of type `2 plan`.
+   */
+  const fileNameFor = (typed: string): string => {
+    const split = splitExtension(typed);
+    return `${split.base}${split.hidden || ".md"}`;
+  };
+
+  /**
+   * Writes the file, opens it and puts the chosen pair on it, in that order.
+   *
+   * The faces go last because src/store/useDocumentFonts.ts keys them by path and the path is the
+   * thing that did not exist a moment ago: `openFor` is what points that store at the new file, and
+   * setting a face before it would store the pair against whatever was open before.
+   */
+  const create = async (dir: string) => {
+    const created = await newDocument(dir, fileNameFor(draft.name.trim() || UNTITLED));
+    select(created);
+    await openDocumentHere(created);
+    useDocumentFonts.getState().openFor(created);
+    if (!fontsEqual(draft.fonts, DEFAULT_FONTS)) setFonts(draft.fonts);
+  };
+
   const save = () => {
+    if (props.createIn !== undefined) {
+      create(props.createIn).catch((e) => notify(`Could not create the document: ${String(e)}`));
+      onClose();
+      return;
+    }
+
     if (!fontsEqual(draft.fonts, fonts)) setFonts(draft.fonts);
 
     // The rename goes last and the panel closes either way. A file that could not be renamed is a
@@ -155,7 +228,7 @@ export function DocumentSetup({ path, onClose }: { path: string; onClose: () => 
     // enough that failing one must not roll back the other.
     const trimmed = draft.name.trim();
     if (trimmed && trimmed !== base) {
-      renameEntry(path, `${trimmed}${hidden}`).catch((e) =>
+      renameEntry(props.path, `${trimmed}${hidden}`).catch((e) =>
         notify(`Could not rename: ${String(e)}`),
       );
     }
@@ -168,11 +241,11 @@ export function DocumentSetup({ path, onClose }: { path: string; onClose: () => 
         className="panel panel-setup"
         role="dialog"
         aria-modal="true"
-        aria-label="Document setup"
+        aria-label={creating ? "New document" : "Document setup"}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="panel-head">
-          <h2>Document setup</h2>
+          <h2>{creating ? "New document" : "Document setup"}</h2>
           <button className="icon-button" onClick={onClose} title="Close (⎋)" aria-label="Close">
             <Icon d={icons.CLOSE} />
           </button>
@@ -187,7 +260,7 @@ export function DocumentSetup({ path, onClose }: { path: string; onClose: () => 
             <input
               ref={nameRef}
               value={draft.name}
-              placeholder={base}
+              placeholder={creating ? UNTITLED : base}
               spellCheck={false}
               autoComplete="off"
               onChange={(e) => set({ name: e.target.value })}

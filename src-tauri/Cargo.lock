@@ -4785,6 +4785,7 @@ name = "margin-docs"
 version = "0.0.1"
 dependencies = [
  "base64 0.22.1",
+ "block2",
  "fontdb",
  "harper-core",
  "ignore",

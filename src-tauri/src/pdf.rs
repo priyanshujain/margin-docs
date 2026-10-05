@@ -386,23 +386,29 @@ pub fn compile_in(
 #[tauri::command(async)]
 pub fn pdf_compile(
     app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
     source: String,
     images: Vec<ImageInput>,
     bundled_fonts: Vec<String>,
     system_fonts: Vec<String>,
 ) -> Result<tauri::ipc::Response, String> {
     // The same gate `fs::checked` puts in front of every other read, reached the same way it is:
-    // the open roots out of shared state, then `resolve_in_roots`. The lock is dropped before the
-    // compile, which is the slowest thing this app does and has no business holding it.
-    let roots = app.state::<crate::Roots>();
-    let root_paths: Vec<String> = {
-        let open = roots.0.lock().map_err(|e| e.to_string())?;
-        open.iter().map(|root| root.path.clone()).collect()
-    };
+    // the paths this window may look at, then `resolve_in_roots`. The locks are dropped before the
+    // compile, which is the slowest thing this app does and has no business holding them.
+    let root_paths = app.state::<crate::windows::Windows>().allowed(
+        &app.state::<crate::Roots>(),
+        window.label(),
+        crate::windows::Access::Nearby,
+    )?;
 
     let (bytes, warnings) = compile_in(source, &images, &root_paths, &bundled_fonts, &system_fonts)?;
     if !warnings.is_empty() {
-        app.emit("pdf-warnings", warnings).ok();
+        app.emit_to(
+            tauri::EventTarget::webview_window(window.label()),
+            "pdf-warnings",
+            warnings,
+        )
+        .ok();
     }
     Ok(tauri::ipc::Response::new(bytes))
 }

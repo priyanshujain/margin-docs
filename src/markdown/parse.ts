@@ -12,7 +12,7 @@
 // list means the list is raw, which is a fair trade for a list that is still there when the file
 // is reopened.
 
-import type { Mark, Node as ProseMirrorNode } from "@tiptap/pm/model";
+import type { Mark, MarkType, Node as ProseMirrorNode } from "@tiptap/pm/model";
 import type { BlockContent, DefinitionContent, Link, List, ListItem, PhrasingContent, RootContent, Table } from "mdast";
 import { calloutKindFromLabel, rawNode } from "../model/doc";
 import { isFrontmatterNode } from "./frontmatter";
@@ -429,9 +429,16 @@ function toggleFrom(children: RootContent[], opening: number, closing: number, t
  * level building its own and the caller spreading it in. A link has to know what leaf is
  * immediately to its left to answer `runAfter`, and the emphasis or strikethrough that leaf came
  * out of is no part of that question, so the walk cannot be the thing that hides it.
+ *
+ * Inline html is the one thing here that is not a tree. mdast hands back an opening tag, the
+ * phrasing between it and its closing tag, and the closing tag, as three siblings, so the two
+ * colour marks have to be paired out of that run rather than descended into. Everything else it can
+ * hand back, and every colour spelling that is not exactly the one this app writes, still falls
+ * through to `default` and takes its top level block down to a raw block with it.
  */
 function inlineFrom(nodes: PhrasingContent[], marks: readonly Mark[], out: ProseMirrorNode[] = []): ProseMirrorNode[] | null {
-  for (const node of nodes) {
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index];
     switch (node.type) {
       case "text": {
         if (node.value) out.push(schema.text(node.value, marks));
@@ -476,11 +483,101 @@ function inlineFrom(nodes: PhrasingContent[], marks: readonly Mark[], out: Prose
       case "inlineMath":
         out.push(n.mathInline.create({ latex: node.value }, null, marks));
         break;
+      case "html": {
+        const opening = colorOpening(node.value);
+        // The nesting is half of the spelling. `MARK_ORDER` puts a colour inside a link and outside
+        // everything else, and a highlight outside a text colour, so a colour tag found under a
+        // strong or inside another of its own kind is not a shape this app writes.
+        if (!opening || marks.some((mark) => !OUTSIDE_COLOR[opening.type.name].has(mark.type.name))) return null;
+        const closing = colorRun(nodes, index, opening.tag);
+        if (closing < 0) return null;
+        const mark = opening.type.create({ color: opening.color });
+        const at = out.length;
+        // A mark needs something to sit on, and `<span style="color: #c4453a"></span>` is a pair of
+        // tags around nothing: there is nowhere in the document for it to live, so the block keeps
+        // its bytes rather than the tags being dropped on the next save.
+        if (!inlineFrom(nodes.slice(index + 1, closing), mark.addToSet(marks), out) || out.length === at) return null;
+        index = closing;
+        break;
+      }
       default:
         return null;
     }
   }
   return out;
+}
+
+/**
+ * The two colour spellings, and the only two pieces of inline html this bridge reads as anything
+ * other than bytes it cannot model.
+ *
+ * Both are pinned character for character to what src/markdown/serialize.ts writes: the tag, one
+ * space after the colon, six lower case hex digits, no other attribute and no other property. That
+ * narrowness is the whole safety argument. This app can promise a byte identical round trip for the
+ * shapes it produces itself and for nothing else, so `<span style="color:#C4453A">`, a span
+ * carrying a class, and a `<mark>` with no style at all are all left as the raw source they always
+ * were, exactly as they were before colour existed.
+ */
+const TEXT_COLOR_OPEN = /^<span style="color: (#[0-9a-f]{6})">$/;
+const HIGHLIGHT_OPEN = /^<mark style="background-color: (#[0-9a-f]{6})">$/;
+
+interface ColorOpening {
+  type: MarkType;
+  color: string;
+  tag: string;
+}
+
+function colorOpening(value: string): ColorOpening | null {
+  const text = TEXT_COLOR_OPEN.exec(value);
+  if (text) return { type: m.textColor, color: text[1], tag: "span" };
+  const highlight = HIGHLIGHT_OPEN.exec(value);
+  if (highlight) return { type: m.highlight, color: highlight[1], tag: "mark" };
+  return null;
+}
+
+/**
+ * Which mark set a colour may be opened inside, which is the nesting `MARK_ORDER` writes and no
+ * other.
+ *
+ * `**<span style="color: #c4453a">x</span>**` describes the same document as the spelling this app
+ * writes and is not that spelling, so reading it would mean handing the file back with the two tags
+ * moved outside the asterisks: the same document, different bytes, on a save the user made
+ * somewhere else in the file. Refusing it keeps the block's own bytes instead.
+ */
+const OUTSIDE_COLOR: Record<string, ReadonlySet<string>> = {
+  textColor: new Set(["link", "highlight"]),
+  highlight: new Set(["link"]),
+};
+
+/**
+ * Where the colour opened at `index` closes, or -1 when nothing in the run closes it.
+ *
+ * Depth is counted per tag name, so a text colour nested inside a highlight pairs with its own
+ * closing tag and not with the one after it. Any other `<span` or `<mark` in the run is counted as
+ * an opener even though it is not a spelling this file recognises, which is deliberate: it cannot
+ * be paired, so counting it means the run ends unbalanced and the block stays raw, where ignoring
+ * it would let a stray tag close somebody else's colour.
+ *
+ * The siblings are the whole of the search, and that is the refusal a colour spanning something
+ * that cannot hold it runs into. `**a <span style="color: #c4453a">b** c</span>` puts the opening
+ * tag inside the strong and the closing tag outside it, so from where it is opened there is no
+ * closing tag at all.
+ */
+function colorRun(nodes: PhrasingContent[], index: number, tag: string): number {
+  const open = `<${tag}`;
+  const close = `</${tag}>`;
+  let depth = 0;
+  for (let at = index + 1; at < nodes.length; at += 1) {
+    const child = nodes[at];
+    if (child.type !== "html") continue;
+    if (child.value === close) {
+      if (depth === 0) return at;
+      depth -= 1;
+      continue;
+    }
+    if (child.value.startsWith(open)) depth += 1;
+  }
+  return -1;
 }
 
 /**

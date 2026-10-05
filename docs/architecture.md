@@ -12,6 +12,23 @@ back, the WYSIWYG editor itself, and all rendering. Rust never parses markdown a
 touches the filesystem directly; everything between the two crosses through the `dto.rs`/`ipc.ts`
 contract described below.
 
+The two sides do not have to model the same thing, and the open folder is one place they
+deliberately do not. Rust keeps roots as a list and persists it, because a root is a watcher, a set
+of index rows and a path the file commands validate against, and none of those care how many there
+are. A window keeps one, because a sidebar holding two projects at once makes every command that
+acts on a folder ask which one (see [design.md](design.md)). Whatever the last session left in that
+list is forgotten once, at launch, in `fs::forget_stale_roots`.
+
+There can be several windows, and `src-tauri/src/windows.rs` is the one place that knows what each
+holds: nothing yet, a folder, or a single Markdown file opened on its own from Finder, `mdocs` or a
+link. Every file command checks its path against the asking window's folders, plus the standalone
+document and, for reads only, the folder that document sits in so its relative images draw. A folder
+open in two windows is one root with one watcher and one set of index rows, released when the last
+window lets go. Documents are owned by canonical path, so opening a file that another window is
+editing brings that window forward instead of making a second buffer. Menu actions go to the
+focused window only, and Quit closes the windows one by one so each saves first; a window whose save
+fails stays open and calls the quit off.
+
 ## The markdown bridge
 
 The bridge is built on `remark-parse` and `remark-stringify` through `unified`, not on
@@ -61,6 +78,17 @@ them would put breaks and runs of spaces through the middle of a pasted sentence
 
 Only a running editor can prove any of this: the fault is between the keystroke and the serializer,
 and the serializer never saw it. `tests/bytes.spec.ts` is where that proof lives.
+
+Keeping the wrap has a cost on the other side of the block, and it is paid in `src/editor/lines.ts`.
+A wrapped paragraph is several lines to the user and one block to every command, and a block command
+acts on the block: Heading 2 on the first line of one turned the whole paragraph into a heading, the
+line under it went to heading size with it, and the file got a setext heading with the next paragraph
+inside. A paste out of a chat window is the common way in, since it lands as one paragraph with two
+hard breaks between what were messages. So a heading command cuts the selected line out of its
+block first, in the same chain as the conversion: the breaks either side of the line go, the block is
+split there, and the command then finds one block holding the words the user pointed at. Only a
+paragraph and a heading are cut. A fence is one block by any reading and is converted whole, which
+`src/editor/fits.test.ts` pins.
 
 ## Callouts, toggles and unknown syntax
 
@@ -363,6 +391,24 @@ created holding a placeholder rather than nothing: an empty formula is `$$$$` on
 back as four characters of text, so a box the editor draws and the file cannot hold is a box that
 disappears on the next save.
 
+Moving up and down through a table is the table lane's own as well, and that was learned from a
+screen recording rather than designed. prosemirror-tables handles the arrows by looking for the
+cell one level above the caret's parent, which in its own schema is the paragraph inside a cell.
+A cell in this schema holds inline content, so the caret's parent is the cell and the library looks
+one level too high, finds a row, and declines every key. What answered instead was the gap cursor
+plugin, which is happy to stand between two cells or two rows, and a gap cursor is a `<div>`
+widget: between two `<td>`s the browser draws it as a cell of its own, so ArrowDown out of the last
+row put the caret between the first two cells of that row and the row's columns jumped sideways
+around it. The lane now binds ArrowUp, ArrowDown and Enter itself, moving to the same column of the
+row beside, out to the block beside the table past its edge rows, and back in from that block; when
+nothing is beside the table it makes an empty paragraph to land in, which is nothing to the
+serializer and so nothing to the file. The table and row nodes refuse the gap cursor outright, and
+`src/editor/blocks/tables.test.ts` reads that refusal off the built schema, because TipTap's own gap
+cursor extension writes the same field and which of the two wins is a matter of extension order.
+The columns themselves stopped moving for a different reason: the table is laid out fixed, in
+`src/styles/prose.css`, so a keystroke in a cell re-measures nothing, and a column is the width it
+was until somebody drags its edge.
+
 Not every change to the document is a change to the file, and the block layer is where that first
 became true. Dragging a column edge writes a width on to every cell in the column, which is a real
 ProseMirror transaction and marks the buffer dirty, and GFM has nowhere at all to put a column
@@ -452,11 +498,11 @@ SQLite through `rusqlite` with the `bundled` feature, so there is no system SQLi
 with FTS5 compiled in as a side effect of that same feature rather than a separate cargo flag. The
 database lives in the app data directory, never inside any folder the user opened, and it is
 derived state rather than a source of truth: every row is rebuilt from the markdown files on disk,
-so deleting it costs nothing but the time to walk the open roots again. It is kept current by the
+so deleting it costs nothing but the time to walk the open folder again. It is kept current by the
 same `notify`/`notify-debouncer-full` watcher the tree uses, debounced because a git checkout or
 another editor's save fires a burst of filesystem events for what is really one change. The index
 answers three things a plain file tree cannot: quick open by filename and path on `Cmd+P`, full text
-search across every open root on `Cmd+Shift+F`, and the backlinks section appended to a document,
+search across the open folder on `Cmd+Shift+F`, and the backlinks section appended to a document,
 a reverse lookup of every relative markdown link elsewhere that resolves to the file currently open.
 
 Derived state that only rebuilds at launch has to survive the session, and the worker behind it was
@@ -487,9 +533,9 @@ tree hides is a file no search result can open is worth keeping for both. The sw
 it writes to the user's files, and a `.gitignore` is a statement about version control rather than
 about whether something is a document: a relative link inside an ignored draft is one the user still
 follows, and leaving it pointing at a path this app is the one that moved is a break nobody finds
-until they follow it. So it gets its own walk with the git sources off and everything else on, the
-four always skipped folders included, and it is bounded by a document count it reports rather than
-by a depth it would have to hide.
+until they follow it. So it gets its own walk of the open folder with the git sources off and
+everything else on, the four always skipped folders included, and it is bounded by a document count
+it reports rather than by a depth it would have to hide.
 
 ## Order of work
 
@@ -503,5 +549,5 @@ round-trip bug is obvious in a plain text diff and invisible once it is glued to
 The third is the WYSIWYG editor: TipTap wired to the bridge, the sticky bottom toolbar, callouts,
 toggles and image paste into `assets/`. The fourth is the SQLite index: the schema, the
 watcher-driven indexer, quick open, full text search and backlinks. The fifth is the rest of the
-shell: multiple roots open at once, the tree showing every file including the greyed-out ones that
-open in the system default app, and settings and the updater.
+shell: the start screen a launch opens on, the tree showing every file including the greyed-out
+ones that open in the system default app, and settings and the updater.

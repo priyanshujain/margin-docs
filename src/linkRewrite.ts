@@ -38,14 +38,14 @@
 // neither the write below nor the one src/document.ts makes for the open document has a path to
 // disk that goes around it.
 //
-// Which files get looked at is decided by walking the open roots rather than by asking the index.
+// Which files get looked at is decided by walking the open folder rather than by asking the index.
 // `backlinksFor` is the cheap route and it is deliberately unused: the index is derived state with
 // no freshness this module can check, and a stale answer is a file quietly left broken, which is
 // the one outcome this project ranks below doing nothing. The sweep reads every markdown document
-// in every open root, a gitignored one included, since the tree's filter is about what a sidebar
+// in the open folder, a gitignored one included, since the tree's filter is about what a sidebar
 // should show and not about whether a link is worth keeping. It skips the parse for text that
 // cannot name the thing that moved, and it gives up and says so rather than reading more documents
-// than `MAX_SWEEP_DOCUMENTS`. A file outside every open root is never seen by anything here and
+// than `MAX_SWEEP_DOCUMENTS`. A file outside the open folder is never seen by anything here and
 // never will be.
 
 import type { Root } from "mdast";
@@ -89,7 +89,7 @@ export interface LinkRewriteReport {
   heldBack: string | null;
   /**
    * Whether every document that could hold a link into the move was actually read. `partial` means
-   * the open roots hold more documents than one move is allowed to read, or a root would not answer
+   * the open folder holds more documents than one move is allowed to read, or it would not answer
    * at all, so only the moved documents' own links were brought up to date.
    */
   coverage: "complete" | "partial";
@@ -655,33 +655,27 @@ async function rewriteOpenFile(
 }
 
 /**
- * Every markdown document in every open root, read fresh so the move is already in it, and whether
+ * Every markdown document in the open folder, read fresh so the move is already in it, and whether
  * that is all of them.
  *
  * `sweep_documents` and not `tree_read`: the tree hides what the folder's gitignore hides, which is
- * the right answer for a sidebar and the wrong one for a writer. `complete` is false when a root
- * came back holding more documents than the sweep will read, which the backend says by handing back
- * one path past the cap.
+ * the right answer for a sidebar and the wrong one for a writer. `complete` is false when the
+ * folder came back holding more documents than the sweep will read, which the backend says by
+ * handing back one path past the cap.
  */
 async function sweepCandidates(): Promise<{ paths: string[]; complete: boolean } | null> {
-  const roots = useWorkspace.getState().roots;
-  const paths: string[] = [];
-  let complete = true;
-  for (const root of roots) {
-    let batch: string[];
-    try {
-      // One past the cap, so a root that goes over costs the cap rather than the folder and is
-      // still visible as having gone over.
-      batch = await sweepDocuments(root.id, MAX_SWEEP_DOCUMENTS + 1);
-    } catch {
-      // A root that will not answer is a root whose documents were not looked at, and the report
-      // has to say so rather than count the ones that did answer as the whole workspace.
-      return null;
-    }
-    if (batch.length > MAX_SWEEP_DOCUMENTS) complete = false;
-    paths.push(...batch);
+  const root = useWorkspace.getState().root;
+  if (root === null) return { paths: [], complete: true };
+  try {
+    // One past the cap, so a folder that goes over costs the cap rather than the whole sweep and
+    // is still visible as having gone over.
+    const paths = await sweepDocuments(root.id, MAX_SWEEP_DOCUMENTS + 1);
+    return { paths, complete: paths.length <= MAX_SWEEP_DOCUMENTS };
+  } catch {
+    // A folder that will not answer is a folder whose documents were not looked at, and the report
+    // has to say so rather than count nothing as the whole workspace.
+    return null;
   }
-  return { paths, complete };
 }
 
 async function inParallel<T>(items: readonly T[], run: (item: T) => Promise<void>): Promise<void> {
@@ -769,7 +763,7 @@ export async function rewriteLinksForMove(move: Move): Promise<LinkRewriteReport
   const documents = candidates?.paths ?? [];
   const inside = new Set(documents.filter((path) => path === move.to || isUnder(path, move.to)));
   // An ignored document is in the sweep now, so what is left for this line is the case that still
-  // is not: a document moved to somewhere outside every open root is in no list this module can
+  // is not: a document moved to somewhere outside the open folder is in no list this module can
   // ask for, and its own links are the half of this that needs no sweep to be answered.
   if (documentKindForPath(move.to) === "markdown") inside.add(move.to);
   let outside = documents.filter((path) => !inside.has(path));

@@ -12,6 +12,7 @@
 .heading-pop,
 .link-pop,
 .callout-pop,
+.color-pop,
 .table-pop,
 .insert-pop,
 .lang-pop {
@@ -23,6 +24,8 @@
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   box-shadow: var(--shadow-pop);
+  transform-origin: bottom left;
+  animation: pop-open 120ms var(--ease);
 }
 
 /* These three hang off tools in the right hand half of a pill that is nearly as wide as the pane,
@@ -33,6 +36,21 @@
 .lang-pop {
   left: auto;
   right: 0;
+  transform-origin: bottom right;
+}
+
+/* A popover used to arrive at full size in a single frame, which leaves nothing on screen saying
+   which of the eighteen buttons it belongs to: six of them open one, and four of the six hang from
+   an edge rather than from directly above the tool that was pressed. Growing out of the anchored
+   corner points the menu back at its button, and the fade covers the frame the layout lands in.
+   Taken from AppFlowy's own toolbar animation, which fades and scales the whole surface from 0.95
+   over 150ms; ours is a little quicker because what is appearing is a short menu rather than a bar
+   sliding into a page. */
+@keyframes pop-open {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
 }
 
 .heading-pop,
@@ -45,6 +63,9 @@
 }
 
 .pop-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   padding: 8px 11px;
   text-align: left;
@@ -60,9 +81,36 @@
   color: var(--ink);
 }
 
-.pop-item[data-on="true"] {
-  background: var(--accent);
-  color: var(--accent-contrast);
+/* The current value used to be the row filled with --accent, which in a menu is what the row under
+   the pointer looks like everywhere else in this app: two states a shade apart, one meaning "this
+   is what the block already is" and one meaning "you are about to press this". A trailing check
+   says the first of them and leaves the fill to hover alone, which is how AppFlowy's own turn-into
+   menu marks its selection. */
+.pop-item > svg {
+  flex: none;
+  margin-left: auto;
+  color: var(--accent);
+}
+
+/* Drawn on every row that could be the current value and hidden on the ones that are not, so the
+   chords beside them stand in a column instead of shuffling fourteen pixels sideways on whichever
+   row the caret happens to be in. */
+.pop-item:not([data-on="true"]) > svg {
+  visibility: hidden;
+}
+
+/* The chord a heading answers to, quiet enough to read as a label on the row rather than as a
+   second thing to press. It takes the free space when it is there, so the check that may follow it
+   sits beside it rather than pushing it back off the right edge. */
+.pop-chord {
+  margin-left: auto;
+  font-family: var(--font-ui);
+  font-size: var(--t-2);
+  color: var(--ink-faint);
+}
+
+.pop-chord + svg {
+  margin-left: 0;
 }
 
 .pop-item.danger:hover {
@@ -121,6 +169,54 @@
   background: var(--danger-wash);
   color: var(--danger);
   opacity: 1;
+}
+
+/* The colour popover: two labelled rows of eight swatches and a None. The swatch's own background
+   is set from the document's palette in the component, which is the one place in this app a colour
+   does not come from a token, because it is a colour the file will hold rather than a colour the
+   app is painted in. Everything else about the swatch is drawn from tokens as usual. */
+.color-pop {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+}
+
+.swatch-row {
+  display: flex;
+  gap: 4px;
+  padding: 2px 5px 6px;
+}
+
+.swatch,
+.swatch-none {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-sm);
+  transition: transform 120ms var(--ease), box-shadow 120ms var(--ease);
+}
+
+/* The ring is drawn outside the swatch so it does not eat into the colour, which is the whole of
+   what the control is showing. */
+.swatch:hover,
+.swatch:focus-visible {
+  outline: none;
+  transform: scale(1.12);
+  box-shadow: 0 0 0 1.5px var(--paper), 0 0 0 3px var(--accent);
+}
+
+.swatch-none {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  color: var(--ink-faint);
+}
+
+.swatch-none:hover,
+.swatch-none:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  color: var(--ink);
 }
 
 /* The table popover, which is two menus in one tool: a size grid outside a table and the row,
@@ -288,6 +384,55 @@
   background: var(--danger-wash);
 }
 
+/* The pill's own tooltip, in place of the `title` attribute every tool used to carry.
+ *
+ * A native title in a macOS webview is system chrome: it arrives after about a second, in a font
+ * and a shade that belong to no theme this app has, and it is the surface most of the editor's
+ * chords are named on now, so it is worth drawing rather than borrowing. The tools carry the text
+ * as data-tip and their accessible name as aria-label, because a title beside this would be the
+ * same words twice, one of them a second later and somewhere else on screen.
+ *
+ * The delay is the whole of what makes it bearable on a row of eighteen buttons: without it, moving
+ * the pointer across the pill flashes a card per tool. It is on the hover state alone, so a tooltip
+ * leaves the moment the pointer does rather than lingering for another four hundred milliseconds.
+ *
+ * Position, rather than the grid item .tool would otherwise gain: .tool is a grid, so a pseudo
+ * element in flow would be a second cell and every button in the pill would grow to hold its own
+ * label. It sits under the popovers deliberately, since a menu is open on purpose and a tooltip is
+ * only ever on the way somewhere. */
+.tool {
+  position: relative;
+}
+
+.tool[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 9px);
+  left: 50%;
+  z-index: 4;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-pop);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--t-2);
+  line-height: 1.45;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms var(--ease);
+}
+
+/* Never on a tool the caret cannot use. A dark tool has nothing to offer and a chord under it would
+   read as an invitation, which is the same lie .tool:disabled in app.css exists to stop telling. */
+.tool[data-tip]:hover:not(:disabled)::after {
+  opacity: 1;
+  transition-delay: 400ms;
+}
+
 /* The pill against the window it has to live in.
  *
  * .editor-pane centres the pill rather than stretching it, so the pill is as wide as its contents
@@ -314,8 +459,33 @@
    the pill wraps to two rows and the row that ends up on top sits over the last line of the
    document. Two pixels off each tool is the whole of it, and the press target stays comfortably
    above the 30px a finger needs. Above 880px nothing here applies and the tools are the size they
-   have always been. */
+   have always been.
+
+   The colour tool is the eighteenth and it spends that saving again, so at the app's minimum width
+   the pill is back to wrapping. Wrapping is the floor this section was written to land on rather
+   than a fault, and the next thing to give is a value in src/styles/app.css, which is where the
+   tool's own width lives: nothing left in here is air. */
 :root[data-compact] .tool {
   min-width: 30px;
   padding: 0 8px;
+}
+
+/* Both of the pill's animations are decoration over a state that has already changed, so a reader
+   who has asked for no motion gets the menu and the tooltip the way they always were: present, at
+   full size, and still on the same delay. The delay is not motion, and dropping it would put a card
+   under the pointer for every button crossed on the way to one. */
+@media (prefers-reduced-motion: reduce) {
+  .heading-pop,
+  .link-pop,
+  .callout-pop,
+  .color-pop,
+  .table-pop,
+  .insert-pop,
+  .lang-pop {
+    animation: none;
+  }
+
+  .tool[data-tip]::after {
+    transition-duration: 0s;
+  }
 }

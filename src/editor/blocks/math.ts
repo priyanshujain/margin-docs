@@ -403,16 +403,48 @@ class MathView implements NodeView {
     if (!node || node.type !== this.node.type || node.attrs.latex === latex) return;
     // Null for the type and nothing for the marks, so an inline formula inside a bold run comes
     // back out of this still bold. setNodeMarkup keeps the marks it was not given new ones for.
-    this.view.dispatch(state.tr.setNodeMarkup(pos, null, { ...node.attrs, latex }));
+    const tr = state.tr.setNodeMarkup(pos, null, { ...node.attrs, latex });
+    // And the node selection is put back on purpose, because it does not survive this step on its
+    // own where the node is inline. setNodeMarkup on a leaf is a replace of the whole node, and
+    // mapping a NodeSelection through one inside a paragraph came back as a text selection beside
+    // it: ProseMirror then called deselectNode, this view cleared `editing`, and math.css hides the
+    // field the moment that attribute goes. The field being hidden is the field losing the
+    // keyboard, so the character that had just been typed was the last one the formula ever got and
+    // the caret was left on the body with nothing on screen holding it. Measured in Chromium:
+    // "xyz" typed into a new inline formula saved `x` and dropped the other two. A display formula
+    // is a block and mapped through the same step intact, which is why only half of this lane was
+    // ever broken.
+    tr.setSelection(NodeSelection.create(tr.doc, pos));
+    this.view.dispatch(tr);
   }
 
-  /** Puts the caret back in the document just past the node, which is what re-renders it. */
+  /**
+   * Puts the caret back in the document just past the node, which is what re-renders it.
+   *
+   * Past the node means the block beside it, and when the formula is the last thing in the document
+   * there is no such block, so one is made. Without that, `Selection.near` searches forward, finds
+   * nothing, comes back and hands over the node selection it started from: Escape left the formula
+   * selected with its source box still open, and the next character typed replaced the whole
+   * formula with that character. src/editor/blocks/tables.ts makes a paragraph in the same spot for
+   * the same reason, and an empty paragraph is nothing to the serializer, so the file does not gain
+   * anything for it.
+   */
   private leave(): void {
     const pos = this.getPos();
     const { state } = this.view;
     if (pos !== undefined) {
       const after = Math.min(pos + this.node.nodeSize, state.doc.content.size);
-      this.view.dispatch(state.tr.setSelection(Selection.near(state.doc.resolve(after), 1)));
+      const tr = state.tr;
+      const $after = tr.doc.resolve(after);
+      const paragraph = state.schema.nodes.paragraph;
+      const index = $after.index();
+      // Asked of the parent rather than of the document, so an inline formula at the end of its
+      // paragraph answers no and keeps the ordinary text caret it already had: a paragraph does not
+      // hold a paragraph, and the position past an inline atom is somewhere a caret can be.
+      if (!$after.nodeAfter && $after.parent.canReplaceWith(index, index, paragraph)) {
+        tr.insert(after, paragraph.create());
+      }
+      this.view.dispatch(tr.setSelection(Selection.near(tr.doc.resolve(after), 1)));
     }
     this.view.focus();
   }

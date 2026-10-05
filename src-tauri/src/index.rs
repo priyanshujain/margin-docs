@@ -911,10 +911,14 @@ fn now_ms() -> i64 {
 
 // ---------------------------------------------------------------- quick open
 
-/// Fuzzy match over every indexed path, best score first.
-pub fn quick_open(app: &AppHandle, query: &str, limit: u32) -> Result<Vec<QuickOpenHit>, String> {
+/// Fuzzy match over every indexed path under the roots `ids`, best score first.
+pub fn quick_open(
+    app: &AppHandle,
+    ids: &[String],
+    query: &str,
+    limit: u32,
+) -> Result<Vec<QuickOpenHit>, String> {
     let index = state(app)?;
-    let ids: Vec<String> = open_roots(app).into_iter().map(|root| root.id).collect();
     // Whitespace is dropped rather than treated as a separator: a quick open query is one
     // subsequence, and a space in the middle of it is somebody typing "getting started" at a path
     // that spells it `getting-started`.
@@ -1171,10 +1175,14 @@ fn runs(positions: &[usize]) -> Vec<MatchRange> {
 
 // ---------------------------------------------------------------- full text
 
-/// FTS5 over every open root, with the line and the characters of each match.
-pub fn search(app: &AppHandle, query: &str, limit: u32) -> Result<Vec<SearchHit>, String> {
+/// FTS5 over the roots `ids`, with the line and the characters of each match.
+pub fn search(
+    app: &AppHandle,
+    ids: &[String],
+    query: &str,
+    limit: u32,
+) -> Result<Vec<SearchHit>, String> {
     let index = state(app)?;
-    let ids: Vec<String> = open_roots(app).into_iter().map(|root| root.id).collect();
     let expression = match_expression(query);
     if expression.is_empty() || ids.is_empty() || limit == 0 {
         return Ok(Vec::new());
@@ -1189,7 +1197,7 @@ pub fn search(app: &AppHandle, query: &str, limit: u32) -> Result<Vec<SearchHit>
         placeholders(ids.len())
     );
     let mut args: Vec<Value> = vec![Value::from(expression)];
-    args.extend(ids.into_iter().map(Value::from));
+    args.extend(ids.iter().cloned().map(Value::from));
     args.push(Value::from(limit as i64));
 
     let held = lock(&index)?;
@@ -1355,27 +1363,32 @@ fn clip(text: &str, max: usize) -> String {
 
 // ---------------------------------------------------------------- backlinks
 
-/// Every document holding a relative link that resolves to `path`.
+/// Every document under the roots `ids` holding a relative link that resolves to `path`.
 ///
 /// A reverse lookup and nothing else: the rows were written when the linking documents were
 /// indexed, so a backlink appears because somebody wrote a link, never because anything was
 /// recorded on this side. A document that links to itself is left out, since listing the document
 /// somebody is reading among the documents that point at it is noise rather than a backlink.
-pub fn backlinks(app: &AppHandle, path: &str) -> Result<Vec<Backlink>, String> {
+pub fn backlinks(app: &AppHandle, ids: &[String], path: &str) -> Result<Vec<Backlink>, String> {
     let index = state(app)?;
     let target = normalized(path);
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
     let held = lock(&index)?;
     let conn = connection(&held)?;
-    let mut stmt = conn
-        .prepare(
-            "SELECT d.path, d.title, l.context
-             FROM links l JOIN docs d ON d.path = l.src_path
-             WHERE l.target_path = ?1 AND l.src_path <> ?1
-             ORDER BY d.title, d.path",
-        )
-        .map_err(|e| e.to_string())?;
+    let sql = format!(
+        "SELECT d.path, d.title, l.context
+         FROM links l JOIN docs d ON d.path = l.src_path
+         WHERE l.target_path = ? AND l.src_path <> ? AND d.root_id IN ({})
+         ORDER BY d.title, d.path",
+        placeholders(ids.len())
+    );
+    let mut args: Vec<Value> = vec![Value::from(target.clone()), Value::from(target)];
+    args.extend(ids.iter().cloned().map(Value::from));
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map(params![target], |row| {
+        .query_map(params_from_iter(args), |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,

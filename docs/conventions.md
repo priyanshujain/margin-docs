@@ -81,8 +81,9 @@ Flat kebab-case class names, not BEM. State is a `data-*` attribute, never an `i
 Every colour, radius and size goes through a token in `src/styles/tokens.css`. If a value is not in
 there, add a token rather than a literal.
 
-Dark mode is `data-theme` on `<html>`, with both palettes defining an identical variable set. Never
-a media query for theme.
+The palette is `data-theme` on `<html>`, and every one of them defines an identical variable set.
+Never a media query for theme, bar the one `prefers-color-scheme` that decides which palette the
+"Match system" setting resolves to.
 
 Transitions name explicit properties and use `var(--ease)`. Never `transition: all`.
 

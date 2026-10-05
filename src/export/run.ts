@@ -19,7 +19,7 @@
 // was running, is gone with it. The panel is the guard now: there is one of it, opening it while
 // it is open is nothing happening, and the compile belongs to its lifetime.
 
-import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { save as savePanel } from "@tauri-apps/plugin-dialog";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { pdfCompile, pdfWrite } from "../api/pdf";
@@ -73,9 +73,10 @@ function describe(warnings: readonly PdfWarning[]): string {
 async function withWarnings<T>(work: () => Promise<T>): Promise<{ result: T; warnings: PdfWarning[] }> {
   const warnings: PdfWarning[] = [];
   // In a browser there is no Tauri event bus to listen on. The dev fixture answers the two commands
-  // so the path can be walked, and it has no warnings to send.
+  // so the path can be walked, and it has no warnings to send. The backend sends them to the window
+  // that asked, and only a listener on this window keeps another window's export out of this one.
   const unlisten = isTauri
-    ? await listen<PdfWarning[]>(PDF_WARNINGS_EVENT, (event) => {
+    ? await getCurrentWebviewWindow().listen<PdfWarning[]>(PDF_WARNINGS_EVENT, (event) => {
         if (Array.isArray(event.payload)) warnings.push(...event.payload);
       })
     : null;

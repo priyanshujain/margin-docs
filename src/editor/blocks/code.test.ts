@@ -4,13 +4,17 @@
 // editor. It can throw or misalign on input it did not expect, which is answered here by fences
 // nobody has a grammar for, and it can be slow, which is answered by counting how much of the
 // document it walks when one character is typed.
+//
+// The last group is about neither, and is here because the block is: the two arrows that get a
+// caret back out of a fence with nothing beyond it.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Editor } from "@tiptap/core";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { EditorState } from "@tiptap/pm/state";
-import type { Plugin } from "@tiptap/pm/state";
+import type { Plugin, Transaction } from "@tiptap/pm/state";
 import type { Decoration, DecorationSet } from "@tiptap/pm/view";
+import type { EditorView } from "@tiptap/pm/view";
 
 // The highlighter is private to code.ts, deliberately, so the only place left to watch how often it
 // runs is underneath it. Everything the real lowlight does still happens; the wrapper only records
@@ -92,6 +96,24 @@ function decorations(state: EditorState): Decoration[] {
   return [];
 }
 
+/** A decoration is the copy control rather than a span of colour when it carries the chrome's key. */
+function isChrome(decoration: Decoration): boolean {
+  return decoration.spec.key === "code-copy";
+}
+
+/**
+ * The highlighter's own spans.
+ *
+ * The lane puts two unrelated things in one decoration set, because a plugin has one, so every test
+ * below about where a grammar's colour landed asks for this rather than for the whole set. The copy
+ * control is a widget: it has no width, it is over nobody's characters, and a test that measured it
+ * as a span would fail on a fence with no highlighting at all, which was how the chrome announced
+ * itself here the first time. The chrome has assertions of its own further down.
+ */
+function spans(state: EditorState): Decoration[] {
+  return decorations(state).filter((decoration) => !isChrome(decoration));
+}
+
 function classOf(decoration: Decoration): string {
   return (decoration as unknown as { type: { attrs: { class: string } } }).type.attrs.class;
 }
@@ -102,12 +124,96 @@ function textOf(state: EditorState, decoration: Decoration): string {
 }
 
 function spanWith(state: EditorState, className: string): string | undefined {
-  const found = decorations(state).find((decoration) => classOf(decoration).includes(className));
+  const found = spans(state).find((decoration) => classOf(decoration).includes(className));
   return found && textOf(state, found);
 }
 
 function fence(language: string, ...lines: string[]): string {
   return ["```" + language, ...lines, "```", ""].join("\n");
+}
+
+/**
+ * The same document with the extensions' ProseMirror plugins in its state, which is what TipTap
+ * builds when it mounts a view and what a keystroke has to be offered to.
+ */
+function mounted(source: string): Editor {
+  const editor = editorFor(source);
+  editor.view.updateState(
+    EditorState.create({ doc: editor.state.doc, plugins: editor.extensionManager.plugins }),
+  );
+  return editor;
+}
+
+const KEY_CODES: Record<string, number> = { ArrowUp: 38, ArrowDown: 40 };
+
+/**
+ * One key, offered to the plugins in the order the view would offer it and stopping at the first
+ * that claims it.
+ *
+ * The walk is the real one rather than a call into the binding this file is about, because which
+ * plugin answers is half the question: the code lane's keymap is asked ahead of the gap cursor's
+ * and of the table lane's, and a key it claims by mistake is a key one of those never sees.
+ */
+function press(editor: Editor, key: string): boolean {
+  const event = {
+    key,
+    keyCode: KEY_CODES[key] ?? 8,
+    shiftKey: false,
+    ctrlKey: false,
+    altKey: false,
+    metaKey: false,
+    preventDefault: () => {},
+  } as unknown as KeyboardEvent;
+  const view = editor.view as unknown as EditorView;
+
+  for (const plugin of editor.state.plugins) {
+    const handler = plugin.props?.handleKeyDown;
+    if (handler && handler.call(plugin, view, event)) return true;
+  }
+  return false;
+}
+
+/**
+ * `body`, run with the editor's view answering one question the way a browser would.
+ *
+ * Whether the caret is on the outer line of its fence is a question about laid out text, and the
+ * headless stand-in TipTap gives an unmounted editor throws for it. A keymap binding runs its
+ * command against `editor.view` rather than against the view the keydown arrived on, so the
+ * stand-in is swapped for the length of the body rather than handed to `press`. Everything else on
+ * it is what TipTap's own stand-in has, so a key that moves the caret moves it for the assertions
+ * afterward. tests/blocks.spec.ts presses the same keys against a real view.
+ */
+function atEdge(editor: Editor, edge: boolean, body: () => void): void {
+  const host = editor as unknown as {
+    editorView: EditorView | null;
+    editorState: EditorState;
+    dispatchTransaction(tr: Transaction): void;
+  };
+  host.editorView = {
+    get state() {
+      return host.editorState;
+    },
+    updateState: (state: EditorState) => {
+      host.editorState = state;
+    },
+    dispatch: (tr: Transaction) => host.dispatchTransaction(tr),
+    endOfTextblock: () => edge,
+    composing: false,
+    dragging: null,
+    editable: true,
+    isDestroyed: false,
+  } as unknown as EditorView;
+  try {
+    body();
+  } finally {
+    host.editorView = null;
+  }
+}
+
+/** What this document would be written to disk as, which is the half the user keeps. */
+function written(editor: Editor): string {
+  const doc = editor.state.doc;
+  return serializeMarkdown({ frontmatter: null, doc, source: "", path: "/notes/a.md" }, doc);
 }
 
 beforeEach(() => {
@@ -125,7 +231,7 @@ describe("the highlighter", () => {
 
     for (const [language, source] of Object.entries(sources)) {
       const state = stateFor(source);
-      expect([language, decorations(state).length > 0]).toEqual([language, true]);
+      expect([language, spans(state).length > 0]).toEqual([language, true]);
     }
   });
 
@@ -135,7 +241,7 @@ describe("the highlighter", () => {
     const from = block.pos + 1;
     const to = from + block.node.content.size;
 
-    const found = decorations(state);
+    const found = spans(state);
     expect(found.length).toBeGreaterThan(3);
     for (const decoration of found) {
       expect(decoration.from).toBeGreaterThanOrEqual(from);
@@ -162,7 +268,7 @@ describe("the highlighter", () => {
     const parsed = parseMarkdown(source, "/notes/a.md");
     const state = stateFor(source);
 
-    expect(decorations(state)).toEqual([]);
+    expect(spans(state)).toEqual([]);
     expect(codeBlocks(state.doc)[0].node.textContent).toBe(
       "this is not code in any language\n  indented  ",
     );
@@ -173,14 +279,14 @@ describe("the highlighter", () => {
     const state = stateFor(fence("", "just some text"));
 
     expect(codeBlocks(state.doc)[0].node.attrs.language).toBe(null);
-    expect(decorations(state)).toEqual([]);
+    expect(spans(state)).toEqual([]);
     expect(highlighted).toEqual([]);
   });
 
   it("leaves a mermaid fence to the lane that draws it", () => {
     const state = stateFor(fence("mermaid", "graph TD;", "  a-->b;"));
 
-    expect(decorations(state)).toEqual([]);
+    expect(spans(state)).toEqual([]);
     expect(highlighted).toEqual([]);
   });
 
@@ -193,7 +299,7 @@ describe("the highlighter", () => {
       '{ this is not, json: ]]\n"neither" is "this"',
     );
     expect(serializeMarkdown(parsed, state.doc)).toBe(source);
-    for (const decoration of decorations(state)) {
+    for (const decoration of spans(state)) {
       expect(textOf(state, decoration).length).toBeGreaterThan(0);
     }
   });
@@ -205,7 +311,7 @@ describe("the highlighter", () => {
 
     const state = stateFor(fence("ts", long.trimEnd()));
 
-    expect(decorations(state)).toEqual([]);
+    expect(spans(state)).toEqual([]);
     expect(highlighted).toEqual([]);
     expect(codeBlocks(state.doc)[0].node.textContent).toBe(long.trimEnd());
   });
@@ -246,13 +352,13 @@ describe("what a keystroke costs", () => {
     const state = before.apply(before.tr.insertText("// ", codeBlocks(before.doc)[0].pos + 1));
 
     const second = codeBlocks(state.doc)[1];
-    const inSecond = decorations(state).filter((decoration) => decoration.from > second.pos);
+    const inSecond = spans(state).filter((decoration) => decoration.from > second.pos);
     expect(inSecond.length).toBeGreaterThan(0);
     for (const decoration of inSecond) {
       expect("const second = 2;").toContain(textOf(state, decoration));
     }
 
-    const keyword = decorations(state).find(
+    const keyword = spans(state).find(
       (decoration) =>
         decoration.from > second.pos && classOf(decoration).includes("hljs-keyword"),
     );
@@ -283,7 +389,7 @@ describe("what a keystroke costs", () => {
 
     expect(highlighted).toEqual([]);
     expect(codeBlocks(state.doc)).toHaveLength(1);
-    for (const decoration of decorations(state)) {
+    for (const decoration of spans(state)) {
       expect("const first = 1;").toContain(textOf(state, decoration));
     }
   });
@@ -314,7 +420,7 @@ describe("what a keystroke costs", () => {
     const state = before.apply(before.tr.setMeta("nothing", true));
 
     expect(highlighted).toEqual([]);
-    expect(decorations(state).length).toBeGreaterThan(0);
+    expect(spans(state).length).toBeGreaterThan(0);
   });
 });
 
@@ -391,6 +497,148 @@ describe("setCodeLanguage", () => {
     expect(setCodeLanguage(editor, "rust")).toBe(false);
     expect(editor.state.doc.toJSON()).toEqual(before);
 
+    editor.destroy();
+  });
+});
+
+// The keys that get a caret back out of a fence, which are this lane's own for exactly one case.
+// A code block is a textblock, so the browser walks the caret down it a line at a time and out of
+// it into the block below, and every one of those is left alone here and asserted to be left alone.
+// The case with no answer anywhere else is a fence with nothing at all beyond it, which is what a
+// code block made from the toolbar in an empty document is: measured in Chromium, ArrowDown at the
+// end of the only block in the document moved nothing, dispatched nothing and drew no gap cursor,
+// and the caret stayed in the fence for as long as the key was pressed.
+describe("the arrows out of a fence", () => {
+  const startOf = (editor: Editor) => codeBlocks(editor.state.doc)[0].pos + 1;
+
+  const endOf = (editor: Editor) => {
+    const block = codeBlocks(editor.state.doc)[0];
+    return block.pos + 1 + block.node.content.size;
+  };
+
+  it("ArrowDown off the end of a fence that ends the document makes a paragraph to land in", () => {
+    const editor = mounted(fence("ts", "const x = 1;"));
+    const before = written(editor);
+
+    atEdge(editor, true, () => {
+      editor.commands.setTextSelection(endOf(editor));
+      expect(press(editor, "ArrowDown")).toBe(true);
+
+      expect(editor.state.doc.childCount).toBe(2);
+      expect(editor.state.doc.lastChild?.type.name).toBe("paragraph");
+      expect(editor.state.selection.$from.parent).toBe(editor.state.doc.lastChild);
+      // An empty paragraph is nothing to the serializer, so the file is untouched by the key.
+      expect(written(editor)).toBe(before);
+    });
+
+    editor.destroy();
+  });
+
+  it("ArrowUp off the top of a fence that starts the document makes a paragraph to land in", () => {
+    const editor = mounted(fence("ts", "const x = 1;"));
+    const before = written(editor);
+
+    atEdge(editor, true, () => {
+      editor.commands.setTextSelection(startOf(editor));
+      expect(press(editor, "ArrowUp")).toBe(true);
+
+      expect(editor.state.doc.childCount).toBe(2);
+      expect(editor.state.doc.firstChild?.type.name).toBe("paragraph");
+      expect(editor.state.selection.$from.parent).toBe(editor.state.doc.firstChild);
+      expect(written(editor)).toBe(before);
+    });
+
+    editor.destroy();
+  });
+
+  // The gesture from the bug report, which is the same fence with nothing typed into it yet.
+  it("gives the caret back out of an empty fence, which is what the toolbar makes", () => {
+    const editor = mounted(fence(""));
+    expect(codeBlocks(editor.state.doc)).toHaveLength(1);
+
+    atEdge(editor, true, () => {
+      editor.commands.setTextSelection(startOf(editor));
+      expect(press(editor, "ArrowDown")).toBe(true);
+      expect(editor.state.selection.$from.parent).toBe(editor.state.doc.lastChild);
+      expect(editor.state.doc.lastChild?.type.name).toBe("paragraph");
+    });
+
+    editor.destroy();
+  });
+
+  it("leaves the key alone when there is a block on that side already", () => {
+    const editor = mounted(["Over.", "", fence("ts", "const x = 1;"), "Under.", ""].join("\n"));
+    const before = editor.state.doc.toJSON();
+
+    atEdge(editor, true, () => {
+      editor.commands.setTextSelection(endOf(editor));
+      expect(press(editor, "ArrowDown")).toBe(false);
+
+      editor.commands.setTextSelection(startOf(editor));
+      expect(press(editor, "ArrowUp")).toBe(false);
+    });
+
+    expect(editor.state.doc.toJSON()).toEqual(before);
+    editor.destroy();
+  });
+
+  // A rule is not a block a caret can stand in, and prosemirror-view answers this one by selecting
+  // the node. Declining is what leaves it able to: the walk in `press` reaches this lane first, and
+  // a paragraph made here would be a paragraph in the file between the fence and the rule.
+  it("leaves a fence with a rule under it to the library that selects one", () => {
+    const editor = mounted([fence("ts", "const x = 1;"), "---", ""].join("\n"));
+    const before = editor.state.doc.toJSON();
+
+    atEdge(editor, true, () => {
+      editor.commands.setTextSelection(endOf(editor));
+      expect(press(editor, "ArrowDown")).toBe(false);
+    });
+
+    expect(editor.state.doc.toJSON()).toEqual(before);
+    editor.destroy();
+  });
+
+  it("leaves a middle line of the fence to the browser", () => {
+    const editor = mounted(fence("ts", "const x = 1;", "const y = 2;", "const z = 3;"));
+    const before = editor.state.doc.toJSON();
+
+    atEdge(editor, false, () => {
+      const at = startOf(editor) + "const x = 1;".length;
+      editor.commands.setTextSelection(at);
+      expect(press(editor, "ArrowDown")).toBe(false);
+      expect(press(editor, "ArrowUp")).toBe(false);
+      expect(editor.state.selection.from).toBe(at);
+    });
+
+    expect(editor.state.doc.toJSON()).toEqual(before);
+    editor.destroy();
+  });
+
+  it("does not answer for a selection with two ends", () => {
+    const editor = mounted(fence("ts", "const x = 1;"));
+    const before = editor.state.doc.toJSON();
+
+    atEdge(editor, true, () => {
+      editor.commands.setTextSelection({ from: startOf(editor), to: endOf(editor) });
+      expect(press(editor, "ArrowDown")).toBe(false);
+      expect(press(editor, "ArrowUp")).toBe(false);
+    });
+
+    expect(editor.state.doc.toJSON()).toEqual(before);
+    editor.destroy();
+  });
+
+  it("does nothing anywhere but in a fence", () => {
+    const editor = mounted(["The only paragraph.", ""].join("\n"));
+    const before = editor.state.doc.toJSON();
+
+    atEdge(editor, true, () => {
+      editor.commands.setTextSelection(1);
+      expect(press(editor, "ArrowDown")).toBe(false);
+      expect(press(editor, "ArrowUp")).toBe(false);
+    });
+
+    expect(editor.state.doc.toJSON()).toEqual(before);
     editor.destroy();
   });
 });

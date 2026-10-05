@@ -1,20 +1,251 @@
-/* The settings panel and the update dialog.
+/* The settings screen, the theme picker on it, and the update dialog.
  *
- * Both borrow .overlay, .panel, .panel-head, .panel-body and .panel-foot from app.css, and the
- * three buttons from tree.css, for the same reason the width menu borrows the menu: a dialog that
- * looked like its own app would be the only thing on screen that did. What is here is the two
- * layouts those shells hold, the switch, and the progress bar.
+ * The update dialog still borrows .overlay, .panel, .panel-head, .panel-body and .panel-foot from
+ * app.css, for the same reason the width menu borrows the menu: a dialog that looked like its own
+ * app would be the only thing on screen that did. Settings does not, because it is no longer a
+ * dialog. It is a surface the size of the window with a section list down one side, which is what a
+ * settings screen has looked like since long before this app, and all it still shares with a panel
+ * is the row and the switch inside it.
+ *
+ * It sits above everything, title bar included, so the row along its top is the one that has to
+ * leave the traffic lights their lane and carry the drag region. That is why its height is
+ * --titlebar-h rather than a number of its own: the lights are drawn by the system at a fixed
+ * offset from the top of the window and do not know this screen exists.
  *
  * The switch is the one control this app has that nothing else needed, so it is drawn here rather
  * than in app.css. It is a button with role="switch" and its state is data-on, which is what the
  * whole app does with a control that is either on or off. */
 
-.panel-settings {
-  width: min(520px, calc(100vw - 32px));
+.settings-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  background: var(--shell);
 }
 
-.panel-settings .panel-body {
+/* The screen takes the focus when it opens so that keys typed at it cannot reach the document
+   underneath, and a ring drawn around the whole window would be saying something nobody needs told:
+   the surface is the only thing on screen. Every control inside it keeps its own. */
+.settings-screen:focus-visible {
+  outline: none;
+}
+
+.settings-head {
+  flex: none;
+  height: var(--titlebar-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  background: var(--shell);
+  border-bottom: 1px solid var(--line);
+}
+
+:root[data-traffic] .settings-head {
+  padding-left: var(--traffic-pad);
+}
+
+.settings-head h2 {
+  margin: 0;
+  font-family: var(--font-book);
+  font-weight: 500;
+  font-size: var(--t-5);
+  color: var(--ink);
+}
+
+.settings-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+}
+
+.settings-nav {
+  flex: none;
+  width: var(--pane-sidebar);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 16px 12px;
+  background: var(--sidebar);
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+}
+
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  font-family: var(--font-ui);
+  font-size: var(--t-3);
+  color: var(--ink-soft);
+  text-align: left;
+  transition: background 120ms var(--ease), color 120ms var(--ease);
+}
+
+.settings-nav-item:hover {
+  color: var(--ink);
+}
+
+.settings-nav-item[data-active="true"] {
+  background: var(--accent-wash);
+  color: var(--ink);
+}
+
+.settings-pane {
+  flex: 1;
+  min-width: 0;
+  background: var(--paper);
+  overflow-y: auto;
+}
+
+/* Measured rather than filling the window. A settings row is a label at one end and a control at
+   the other, and across 1600px of window the two would read as two separate things. */
+.settings-column {
+  max-width: 620px;
+  display: flex;
+  flex-direction: column;
   gap: 24px;
+  padding: 34px 40px 60px;
+}
+
+/* A window this narrow has no room for a column beside a list, so the sections become a row across
+   the top and the page keeps the width. */
+:root[data-phone] .settings-body {
+  flex-direction: column;
+}
+
+:root[data-phone] .settings-nav {
+  width: auto;
+  flex-direction: row;
+  gap: 4px;
+  padding: 8px 10px;
+  border-right: none;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+}
+
+:root[data-phone] .settings-column {
+  padding: 22px 18px 48px;
+}
+
+/* The theme picker.
+ *
+ * Every tile is the palette drawing itself: src/styles/themes.css hands each block the
+ * .theme-swatch selector as well as :root, so what is inside a tile is that theme's real sidebar,
+ * page, ink and accent rather than four hexes copied into this file. The two text lines are --ink
+ * at two strengths instead of --ink and --ink-faint, which keeps what a tile needs down to the six
+ * colours light and dark have to repeat over there.
+ *
+ * The tick is the app's accent and not the previewed theme's, because it is chrome sitting on a
+ * picture rather than part of the picture. */
+
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
+  gap: 12px;
+  padding-top: 2px;
+}
+
+.theme-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  text-align: left;
+}
+
+.theme-preview {
+  position: relative;
+  display: flex;
+  height: 78px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  transition: border-color 120ms var(--ease), box-shadow 120ms var(--ease);
+}
+
+.theme-card:hover .theme-preview {
+  border-color: var(--ink-faint);
+}
+
+.theme-card[data-active="true"] .theme-preview {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.theme-pair,
+.theme-swatch {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+.theme-swatch {
+  background: var(--paper);
+}
+
+.theme-swatch-rail {
+  flex: none;
+  width: 32%;
+  background: var(--sidebar);
+  border-right: 1px solid var(--line);
+}
+
+.theme-swatch-page {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 9px;
+}
+
+.theme-swatch-line {
+  height: 3px;
+  border-radius: var(--r-pill);
+  background: var(--ink);
+  opacity: 0.78;
+}
+
+.theme-swatch-line + .theme-swatch-line {
+  width: 58%;
+  opacity: 0.4;
+}
+
+.theme-swatch-dot {
+  width: 9px;
+  height: 9px;
+  margin-top: 2px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.theme-tick {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.theme-name {
+  font-family: var(--font-ui);
+  font-size: var(--t-2);
+  color: var(--ink-soft);
+}
+
+.theme-card[data-active="true"] .theme-name {
+  color: var(--ink);
 }
 
 .setting-group {
@@ -23,8 +254,8 @@
   gap: 4px;
 }
 
-/* The label is spaced for a sidebar over in app.css, and the panel has its own padding already. */
-.panel-settings .nav-label {
+/* The label is spaced for a sidebar over in app.css, and the column has its own padding already. */
+.settings-column .nav-label {
   padding: 0 0 6px;
 }
 
@@ -71,6 +302,12 @@
   font-family: var(--font-ui);
   font-size: var(--t-2);
   color: var(--ink-faint);
+}
+
+/* The one place a note is a paragraph under a group rather than the second line of a row. */
+p.setting-note {
+  margin: 2px 0 0;
+  line-height: 1.5;
 }
 
 .setting-row[data-disabled="true"] .setting-label {

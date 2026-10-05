@@ -4,7 +4,10 @@
 // nothing here declares a node. What is missing is the behaviour prosemirror-tables carries: the
 // cell selection, Tab between cells, and the row and column edits a toolbar asks for by name. That
 // library ships inside @tiptap/pm/tables and reads the `tableRole` extensions.ts already puts on
-// each spec, so it plugs in whole rather than being reimplemented.
+// each spec, so it plugs in whole rather than being reimplemented. The one piece of it that does
+// not plug in is moving up and down: its arrow handling assumes a cell holds paragraphs, and a cell
+// here holds inline content, so the arrows and Enter between rows are this file's own. See
+// caretCell below for what answered those keys before it did.
 //
 // Alignment is the one thing the library has no idea about, and it runs through everything below.
 // `align` is a cell attribute the bridge reads back out of the GFM delimiter row, and that row is
@@ -26,15 +29,25 @@
 // put them in. The drag is a real document change all the same, and src/document.ts is where it
 // stops being one: a transaction that only moved something the markdown cannot spell does not mark
 // the buffer dirty, so the drag never reaches the debounce and no save is scheduled behind it.
+//
+// The two bars at the end of the table are the one affordance on the table itself, and they are two
+// rather than the row of per column grips every other editor draws. A grip that scopes insert
+// before, insert after and delete to the column under it is the drag handle argument in
+// docs/design.md wearing a different hat: it says the document is a set of objects to be
+// rearranged, which is not the mental model of writing a markdown file. Growing something is not
+// rearranging it. A bar that appends a row or a column is the same gesture as typing past the end
+// of a paragraph, so it is on the right side of that line and a grip is not, and everything a grip
+// would have offered is already in the pill's table popover where the whole set lives together.
 
 import { Extension } from "@tiptap/core";
 import type { Editor } from "@tiptap/core";
-import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
-import type { Command, Transaction } from "@tiptap/pm/state";
-import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { Plugin, PluginKey, Selection, TextSelection } from "@tiptap/pm/state";
+import type { Command, EditorState, Transaction } from "@tiptap/pm/state";
+import type { Node as ProseMirrorNode, ResolvedPos } from "@tiptap/pm/model";
 import {
   CellSelection,
   TableMap,
+  addColumn,
   addColumnAfter,
   addColumnBefore,
   addRow,
@@ -45,10 +58,12 @@ import {
   deleteTable,
   goToNextCell,
   isInTable,
+  nextCell,
   selectedRect,
   tableEditing,
 } from "@tiptap/pm/tables";
 import type { TableRect } from "@tiptap/pm/tables";
+import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import type { EditorView } from "@tiptap/pm/view";
 import type { ColumnAlign } from "../../model/doc";
 import { overCells } from "../fits";
@@ -60,6 +75,25 @@ import type { TableOp } from "../index";
  * first, which is the mistake this lane has already made once with a paste.
  */
 export const typingKey = new PluginKey("tableTyping");
+
+/** The focus ring's plugin, named for the same reason: a test finds the ring by asking this key. */
+export const focusKey = new PluginKey("tableFocus");
+
+/** The bars' plugin, so a test can read where the widget sits rather than guess at the position. */
+export const barsKey = new PluginKey<DecorationSet>("tableBars");
+
+/**
+ * Column widths, in pixels, for prosemirror-tables' resizing plugin.
+ *
+ * COLUMN_MIN is what a column is worth before anybody has dragged it. The table node view the
+ * plugin installs adds one of these per undragged column into the table's inline min-width, and
+ * under the fixed layout in src/styles/prose.css that floor is what makes a wide table scroll inside
+ * its box rather than squash its columns to nothing. Six of them fit the normal measure, which is
+ * about the widest table anybody writes by hand. RESIZE_MIN is how narrow a drag may make one, and
+ * it is less: a column of ticks or of single digits is a real thing to want.
+ */
+const COLUMN_MIN = 88;
+const RESIZE_MIN = 44;
 
 /** What each column says, read where the serializer reads it: the table's first row. */
 function columnAlignments(table: ProseMirrorNode): ColumnAlign[] {
@@ -130,6 +164,22 @@ function cursorIntoLastRow(tr: Transaction, tablePos: number): void {
   if (!table) return;
   const map = TableMap.get(table);
   const cell = tablePos + 1 + map.positionAt(map.height - 1, 0, table);
+  tr.setSelection(TextSelection.near(tr.doc.resolve(cell + 1))).scrollIntoView();
+}
+
+/**
+ * And the same for a column, which lands in its header rather than in its first body cell.
+ *
+ * A column is named before it is filled: what the writer types first is the heading, and the header
+ * is also the row the file writes the column's alignment off, so it is where the caret is useful.
+ * The scroll is the other half of it, since a column appended to a table already wider than the
+ * measure appears outside the wrapper's scroll box and would otherwise arrive invisibly.
+ */
+function cursorIntoLastColumn(tr: Transaction, tablePos: number): void {
+  const table = tr.doc.nodeAt(tablePos);
+  if (!table) return;
+  const map = TableMap.get(table);
+  const cell = tablePos + 1 + map.positionAt(0, map.width - 1, table);
   tr.setSelection(TextSelection.near(tr.doc.resolve(cell + 1))).scrollIntoView();
 }
 
@@ -368,6 +418,331 @@ function collapseRectangle(view: EditorView): false {
   return false;
 }
 
+/**
+ * The cell the caret is in, resolved at the cell so that `nextCell` can be asked about it, or null
+ * for a caret anywhere else and for every selection that is not a caret or a range inside one cell.
+ *
+ * `$head.parent` rather than a walk upward: a cell holds inline content in src/model/schema.ts, so
+ * the caret's parent is the cell itself. That is also why prosemirror-tables' own arrow handling
+ * never fires in this editor, and the reason the two arrows and Enter below exist at all. Its
+ * `atEndOfCell` starts looking one level above the caret's parent, which in the library's own
+ * schema is the paragraph inside a cell and in this one is the row, and it finds no cell from
+ * there. What answered the keys instead was the gap cursor plugin, which is glad to stand between
+ * two cells or two rows, and a gap cursor is a `<div>` widget: between two `<td>`s the browser
+ * draws it as a cell of its own, and the row's columns shove sideways until the caret leaves.
+ * Measured in Chromium: ArrowDown out of the last row of a table with a paragraph under it put the
+ * caret between the first two cells of that row, and ArrowUp out of the header did the same at its
+ * front.
+ */
+function caretCell(state: EditorState): ResolvedPos | null {
+  const { selection } = state;
+  if (!(selection instanceof TextSelection)) return null;
+  const { $anchor, $head } = selection;
+  if (!$anchor.sameParent($head)) return null;
+  const role = $head.parent.type.spec.tableRole;
+  if (role !== "cell" && role !== "header_cell") return null;
+  return state.doc.resolve($head.before());
+}
+
+/**
+ * The caret into the row `dir` says, same column, or out of the table when there is no such row.
+ *
+ * Out means the block beside the table, and when nothing is beside it, a paragraph made there to
+ * be beside it. That paragraph is the one edit in this file a navigation key makes, and it is made
+ * rather than declined because the alternative is the gap cursor: a hairline after the table that
+ * takes typing but that nobody recognises as a place to type. An empty paragraph is nothing to the
+ * serializer, so the file does not change for it, only the buffer. False is answered when the
+ * table's parent cannot hold a paragraph at that point, which no container in the schema refuses.
+ */
+function toRow(dir: -1 | 1, tr: Transaction, $cell: ResolvedPos): boolean {
+  const $next = nextCell($cell, "vert", dir);
+  if ($next) {
+    tr.setSelection(Selection.near($next, 1));
+    return true;
+  }
+  // The cell is resolved inside its row, so one level up from its parent is the table itself.
+  const $edge = tr.doc.resolve(dir > 0 ? $cell.after(-1) : $cell.before(-1));
+  if (dir > 0 ? $edge.nodeAfter : $edge.nodeBefore) {
+    tr.setSelection(Selection.near($edge, dir));
+    return true;
+  }
+  const paragraph = tr.doc.type.schema.nodes.paragraph;
+  const index = $edge.index();
+  if (!$edge.parent.canReplaceWith(index, index, paragraph)) return false;
+  tr.insert($edge.pos, paragraph.create());
+  tr.setSelection(TextSelection.create(tr.doc, $edge.pos + 1));
+  return true;
+}
+
+/**
+ * Into the table beside the caret from the block over it or under it: the header row from above,
+ * the last row from below, first column either way.
+ *
+ * The arrows out of a table land on the block beside it, and a key that goes one way has to come
+ * back the other. Left alone, ArrowUp from under a table is the gap cursor plugin's turn, and it
+ * answers with its hairline after the table, which is where the caret then sits until a click.
+ * A gap cursor is also where a click under a table that ends the document puts the caret, so the
+ * caret is allowed to be between blocks already rather than in one, and is taken from there.
+ */
+function intoTable(dir: -1 | 1, tr: Transaction, view: EditorView): boolean {
+  const { selection } = tr;
+  if (!selection.empty) return false;
+  const { $head } = selection;
+  let $edge = $head;
+  if ($head.parent.isTextblock) {
+    if (!view.endOfTextblock(dir > 0 ? "down" : "up")) return false;
+    $edge = tr.doc.resolve(dir > 0 ? $head.after() : $head.before());
+  }
+  const table = dir > 0 ? $edge.nodeAfter : $edge.nodeBefore;
+  if (!table || table.type.spec.tableRole !== "table") return false;
+  const tablePos = dir > 0 ? $edge.pos : $edge.pos - table.nodeSize;
+  const map = TableMap.get(table);
+  const cell = tablePos + 1 + map.positionAt(dir > 0 ? 0 : map.height - 1, 0, table);
+  tr.setSelection(TextSelection.near(tr.doc.resolve(cell + 1)));
+  return true;
+}
+
+/**
+ * Up or down off the line the caret is on, when that line is the last one in that direction: to
+ * the row beside it inside a table, out of the table under its last row or over its first, and
+ * into a table from the block beside it. Anywhere else the key is left alone and the browser moves
+ * the caret a line, which is the one part of this it does well. The measurement is the view's,
+ * since which line a caret is on is a question about wrapped text and not about the document.
+ */
+function verticalArrow(dir: -1 | 1): Command {
+  return (state, dispatch, view) => {
+    if (!view) return false;
+    const tr = state.tr;
+    const $cell = caretCell(state);
+    const moved = $cell
+      ? view.endOfTextblock(dir > 0 ? "down" : "up") && toRow(dir, tr, $cell)
+      : intoTable(dir, tr, view);
+    if (!moved) return false;
+    if (dispatch) dispatch(tr.scrollIntoView());
+    return true;
+  };
+}
+
+/**
+ * Enter: the cell below, and out of the table under the last row.
+ *
+ * A cell holds one line of GFM, so there is no block to split and nothing for Enter to make inside
+ * one; what the key means in a grid is the next row, and at the bottom of the grid the paragraph
+ * under it, made if it is not there. Not a new row: Tab out of the last cell is that gesture, and a
+ * key pressed to leave the table should not grow it, since an empty row is a line of empty cells in
+ * the file the next time it is saved.
+ */
+const enterInCell: Command = (state, dispatch) => {
+  const $cell = caretCell(state);
+  if (!$cell) return false;
+  const tr = state.tr;
+  if (!toRow(1, tr, $cell)) return false;
+  if (dispatch) dispatch(tr.scrollIntoView());
+  return true;
+};
+
+/**
+ * A ring around the cell the caret is in, the way a spreadsheet shows which cell is taking the keys.
+ *
+ * A decoration rather than a class written from a selection listener, so it is derived from the
+ * state on every draw and can never be left behind on a cell the caret has moved out of. It is on
+ * the cell's own node, and only for a caret or a range inside one cell: a rectangle of cells has the
+ * selection wash and a table selected whole has no one cell to point at. src/styles/prose.css draws
+ * it, and only while the document holds the keyboard.
+ */
+const focusedCell = new Plugin({
+  key: focusKey,
+  props: {
+    decorations(state) {
+      const $cell = caretCell(state);
+      const cell = $cell?.nodeAfter;
+      if (!$cell || !cell) return null;
+      return DecorationSet.create(state.doc, [
+        Decoration.node($cell.pos, $cell.pos + cell.nodeSize, { class: "cell-focus" }),
+      ]);
+    },
+  },
+});
+
+/** Which way one of the two bars grows the table it hangs off. */
+export type BarKind = "row" | "column";
+
+const SVG = "http://www.w3.org/2000/svg";
+
+/** Feather's plus, which is the whole of what a bar has to say. */
+const PLUS_D = "M12 5v14 M5 12h14";
+
+/**
+ * A row appended under the last one, or a column appended after the last, at a table named by
+ * position rather than by where the cursor happens to be.
+ *
+ * Every other op in this file starts from `selectedRect`, which reads the table out of the
+ * selection, and a bar cannot: it is pressed with the pointer, on a table the caret may be nowhere
+ * near, and the press must not first drag the caret across the document to make the command legal.
+ * So the table is the argument and the selection is left alone until the row exists to put it in.
+ *
+ * The alignments and the header row are put back exactly as the toolbar's own ops put them back,
+ * for the same two reasons: prosemirror-tables builds a new cell from the attribute's default, and
+ * it copies the type of the cell it is building beside. Neither is what GFM can spell.
+ */
+function growBy(kind: BarKind, tablePos: number): Command {
+  return (state, dispatch) => {
+    const table = state.doc.nodeAt(tablePos);
+    if (!table || table.type.spec.tableRole !== "table") return false;
+    if (dispatch) {
+      const map = TableMap.get(table);
+      // The whole table as a rect, because `addRow` and `addColumn` want one and only read the map,
+      // the node and where its content starts off it.
+      const rect: TableRect = {
+        map,
+        table,
+        tableStart: tablePos + 1,
+        left: 0,
+        top: 0,
+        right: map.width,
+        bottom: map.height,
+      };
+      const alignment = columnAlignments(table);
+      const tr =
+        kind === "row" ? addRow(state.tr, rect, map.height) : addColumn(state.tr, rect, map.width);
+      restoreAlignments(tr, tablePos, alignment);
+      normaliseHeaderRow(tr, tablePos);
+      if (kind === "row") cursorIntoLastRow(tr, tablePos);
+      else cursorIntoLastColumn(tr, tablePos);
+      dispatch(tr);
+    }
+    return true;
+  };
+}
+
+/**
+ * A press on one of the bars, which is where the widget's position becomes a table.
+ *
+ * The widget sits inside its own table, after the last row, so the node it resolves into is the
+ * table itself and the position before that node is what the command needs. Reading it back at the
+ * moment of the press rather than closing over it is what lets the element outlive every edit made
+ * to the document around it.
+ *
+ * The focus is the last step rather than the first. A press on chrome inside the document does not
+ * move the caret on its own, since the mousedown that would have moved it is cancelled, so a bar
+ * pressed in a document nobody was typing in would otherwise grow a table and leave the keyboard
+ * wherever it was.
+ */
+export function growTable(view: EditorView, barPos: number, kind: BarKind): boolean {
+  const $bar = view.state.doc.resolve(barPos);
+  if ($bar.parent.type.spec.tableRole !== "table") return false;
+  if (!growBy(kind, $bar.before())(view.state, view.dispatch)) return false;
+  view.focus();
+  return true;
+}
+
+/** One bar: a button with a plus on it and nothing else, since it has one thing to do. */
+function bar(owner: Document, kind: BarKind, press: () => void): HTMLButtonElement {
+  const button = owner.createElement("button");
+  button.className = kind === "row" ? "table-add-row" : "table-add-col";
+  button.type = "button";
+  button.title = kind === "row" ? "Add a row" : "Add a column";
+  button.setAttribute("aria-label", kind === "row" ? "Add a row" : "Add a column");
+
+  const glyph = owner.createElementNS(SVG, "svg");
+  glyph.setAttribute("viewBox", "0 0 24 24");
+  glyph.setAttribute("fill", "none");
+  glyph.setAttribute("stroke", "currentColor");
+  glyph.setAttribute("stroke-width", "1.6");
+  glyph.setAttribute("stroke-linecap", "round");
+  glyph.setAttribute("stroke-linejoin", "round");
+  const stroke = owner.createElementNS(SVG, "path");
+  stroke.setAttribute("d", PLUS_D);
+  glyph.appendChild(stroke);
+  button.appendChild(glyph);
+
+  // The press is a gesture aimed at chrome, and the browser would answer a mousedown inside a
+  // contenteditable by putting the caret under it first.
+  button.addEventListener("mousedown", (event) => event.preventDefault());
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    press();
+  });
+  return button;
+}
+
+/**
+ * The pair, built once per table and reused for as long as that table is on screen.
+ *
+ * They hang off a wrapper that draws nothing and is positioned over the table's own box rather than
+ * the wrapper prosemirror-tables puts around it, because that wrapper is the scroll box and the
+ * table is what scrolls inside it: measured against the box, a bar for a table wider than the
+ * measure would sit at the edge of the window while the column it appends after was somewhere off
+ * to the right. src/styles/prose.css draws all three.
+ */
+function barsControl(view: EditorView, getPos: () => number | undefined): HTMLElement {
+  const owner = view.dom.ownerDocument;
+  const bars = owner.createElement("div");
+  bars.className = "table-bars";
+
+  const press = (kind: BarKind) => () => {
+    const pos = getPos();
+    if (pos !== undefined) growTable(view, pos, kind);
+  };
+  bars.appendChild(bar(owner, "row", press("row")));
+  bars.appendChild(bar(owner, "column", press("column")));
+  return bars;
+}
+
+/**
+ * The widget's spec, declared once so that a rebuilt decoration set hands the view the same element
+ * back rather than a new pair of buttons under the pointer.
+ *
+ * prosemirror-view compares two widgets by their `toDOM` and by their spec, and it compares the
+ * spec by identity first, so a literal written inside the loop below would be a different object on
+ * every rebuild and the bars would be torn down and remade on every keystroke in the document.
+ *
+ * Every event inside the bars is stopped, which is what keeps a press on one from also being a
+ * press in the document: prosemirror-view walks up from the event's target looking for a view
+ * description that claims it, and finding this one it hands the event to nobody, so neither the
+ * cell selection drag nor the column resize watcher sees a pointer that was never aimed at the
+ * text.
+ */
+const BAR_SPEC = { key: "table-bars", side: 1, stopEvent: () => true };
+
+/**
+ * One pair of bars per table, at the end of that table's content.
+ *
+ * A widget rather than a node view, and that is forced rather than chosen: prosemirror-tables'
+ * column resizing plugin claims the node view for `table` in order to write the colgroup the fixed
+ * layout is built on, ProseMirror resolves a node view first plugin wins by node name, and a second
+ * claim would either lose to it or take the column widths away from it. A widget needs no claim,
+ * and it is the safer half of the trade as well: the view's own parseRule for a widget is
+ * `{ ignore: true }`, so two buttons drawn inside a `<tbody>` are invisible to everything that
+ * reads the DOM back into the tree, and the table on disk is the table the bridge parsed.
+ *
+ * Rebuilt on a change to the document rather than mapped through it. The walk stops at every
+ * textblock and at every table, so it costs one pass over the block structure and never touches
+ * text, and rebuilding means a row inserted at exactly the position the widget stands at cannot
+ * leave the bars drawn above the row they just made.
+ */
+function barsFor(doc: ProseMirrorNode): DecorationSet {
+  const decorations: Decoration[] = [];
+  doc.descendants((node, pos) => {
+    if (node.isTextblock) return false;
+    if (node.type.spec.tableRole !== "table") return true;
+    decorations.push(Decoration.widget(pos + node.nodeSize - 1, barsControl, BAR_SPEC));
+    return false;
+  });
+  return DecorationSet.create(doc, decorations);
+}
+
+const tableBars = new Plugin<DecorationSet>({
+  key: barsKey,
+  state: {
+    init: (_config, state) => barsFor(state.doc),
+    apply: (tr, value) => (tr.docChanged ? barsFor(tr.doc) : value),
+  },
+  props: {
+    decorations: (state) => barsKey.getState(state) ?? DecorationSet.empty,
+  },
+});
+
 export const Tables = Extension.create({
   name: "tables",
 
@@ -390,11 +765,34 @@ export const Tables = Extension.create({
     // character over a rectangle is the same destruction arriving by the one route nobody guarded.
     return [
       typing,
+      focusedCell,
+      tableBars,
       // columnResizing before tableEditing, which takes mousedown for the cell selection drag: a
       // press on a column edge is a resize, and the plugin that decides that has to be asked first.
-      columnResizing(),
+      columnResizing({ cellMinWidth: RESIZE_MIN, defaultCellMinWidth: COLUMN_MIN }),
       tableEditing(),
     ];
+  },
+
+  /**
+   * No gap cursor between two cells or between two rows.
+   *
+   * prosemirror-gapcursor will stand anywhere both neighbours are closed and the parent's default
+   * child is a textblock, which is true between two isolating cells in a row that would take a
+   * third, and the cursor it draws there is a `<div>` between two `<td>`s: a phantom cell, and the
+   * row's columns jump sideways for as long as it is there. See caretCell above for how a caret
+   * got sent there. Before and after the table the gap cursor is still allowed, since a table can
+   * end a document and a click under it has to land somewhere; the arrows and Enter simply never
+   * send a caret there, they make a paragraph instead.
+   *
+   * TipTap's own gap cursor extension writes this same field on every node from the node's config,
+   * so which of the two answers is a matter of extension order. src/editor/blocks/tables.test.ts
+   * reads the built schema rather than trusting that order.
+   */
+  extendNodeSchema(extension) {
+    return extension.name === "table" || extension.name === "tableRow"
+      ? { allowGapCursor: false }
+      : {};
   },
 
   addKeyboardShortcuts() {
@@ -414,6 +812,18 @@ export const Tables = Extension.create({
       // claimedInTable above for what that costs the document when it is.
       Tab: run(claimedInTable(nextCellOrNewRow)),
       "Shift-Tab": run(claimedInTable(goToNextCell(-1))),
+
+      // The row below, and the paragraph under the table after the last row. Claimed for the whole
+      // table, a rectangle of cells included, because what is behind it is the core keymap's
+      // split, which has nothing right to do inside a cell.
+      Enter: run(claimedInTable(enterInCell)),
+
+      // Not claimed: a caret on a middle line of a wrapped cell answers false and the browser
+      // moves it a line, which is what the key means there. Bound here rather than left to
+      // prosemirror-tables' own arrow handling, which never fires against a cell holding inline
+      // content; see caretCell above.
+      ArrowUp: run(verticalArrow(-1)),
+      ArrowDown: run(verticalArrow(1)),
 
       // Said here rather than left to tableEditing's own binding further down the plugin list.
       // A cell selection has to be emptied and not removed: deleting it as a selection would take

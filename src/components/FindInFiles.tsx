@@ -1,4 +1,4 @@
-// Cmd+Shift+F: the text inside every file in every open root, which is the one question the file
+// Cmd+Shift+F: the text inside every file in the open folder, which is the one question the file
 // tree and the find bar between them cannot answer. The bar in src/components/FindBar.tsx searches
 // the one document that is open; this searches the ones that are not.
 //
@@ -17,11 +17,11 @@ import { useEscapeLayer } from "../escape";
 import type { MatchRange } from "../ipc";
 import { onCommand } from "../keys/commands";
 import { useKeyContext } from "../keys/keymap";
-import { useDocument } from "../store/useDocument";
 import { useIndex } from "../store/useIndex";
 import { useSearch } from "../store/useSearch";
 import { notify } from "../store/useToast";
 import { useWorkspace } from "../store/useWorkspace";
+import { openDocumentHere } from "../windows";
 import { Palette, highlight, type PaletteRow, type PaletteStatus } from "./Palette";
 
 /** Longer than quick open's: this one reads the text of every file rather than their paths. */
@@ -46,9 +46,8 @@ export function FindInFiles() {
   const phase = useSearch((s) => s.fullTextPhase);
   const error = useSearch((s) => s.fullTextError);
   const indexPhase = useIndex((s) => s.phase);
-  const roots = useWorkspace((s) => s.roots);
+  const root = useWorkspace((s) => s.root);
   const select = useWorkspace((s) => s.select);
-  const openDocument = useDocument((s) => s.open);
 
   useEffect(
     () =>
@@ -75,7 +74,7 @@ export function FindInFiles() {
 
   const choose = (path: string) => {
     select(path);
-    openDocument(path).catch((e) => notify(`Could not open: ${String(e)}`));
+    openDocumentHere(path).catch((e) => notify(`Could not open: ${String(e)}`));
   };
 
   const searching = query.trim() !== "";
@@ -97,19 +96,18 @@ export function FindInFiles() {
     }
     if (!searching) {
       return {
-        text:
-          roots.length === 0 ? "Open a folder first." : "Type to search every folder that is open.",
+        text: root === null ? "Open a folder first." : "Type to search the folder that is open.",
       };
     }
     if (phase === "loading") return { text: "Searching…" };
     if (indexPhase === "indexing") return { text: "Still indexing. Try again in a moment." };
-    return { text: "Nothing in these folders says that." };
+    return { text: "Nothing in this folder says that." };
   };
 
   return (
     <Palette
       label="Find in files"
-      placeholder="Search every open folder"
+      placeholder="Search the open folder"
       query={query}
       onQuery={setQuery}
       rows={rows}

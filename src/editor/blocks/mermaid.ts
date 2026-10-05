@@ -83,8 +83,23 @@ function load(): Promise<Mermaid> {
   return loading;
 }
 
+/**
+ * The applied theme's own name, which is what a drawn diagram is stale against.
+ *
+ * The whole attribute and not a light-or-dark reduction of it: the app ships several palettes of
+ * each scheme, and a diagram drawn in Sepia is the wrong picture in Mist even though neither of
+ * them is dark. Comparing the reduction let the two swap without a redraw.
+ */
 function themeName(): string {
-  return document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+  return document.documentElement.getAttribute("data-theme") ?? "light";
+}
+
+/**
+ * Which way round the contrast runs, asked of the palette rather than of its name. Every theme
+ * declares `color-scheme`, so this stays right for a palette added after this file was written.
+ */
+function isDarkTheme(): boolean {
+  return getComputedStyle(document.documentElement).colorScheme.includes("dark");
 }
 
 /**
@@ -98,7 +113,7 @@ function themeName(): string {
 function themeVariables(): Record<string, string | boolean> {
   const style = getComputedStyle(document.documentElement);
   const variables: Record<string, string | boolean> = {
-    darkMode: themeName() === "dark",
+    darkMode: isDarkTheme(),
     fontFamily: "var(--font-ui)",
   };
 
@@ -503,7 +518,7 @@ export const MermaidRendering = Extension.create({
 });
 
 /**
- * Inserts an empty ```mermaid fence. False where a code block cannot go.
+ * Inserts an empty ```mermaid fence and puts the caret in it. False where a code block cannot go.
  *
  * Through `place` rather than asking `fits` about each end itself, which is what this did while it
  * was the only insert in its own file. Both spellings refuse the same things today, but only one of
@@ -511,9 +526,40 @@ export const MermaidRendering = Extension.create({
  * across a table lost six cells to an insert that had asked it the older way, and a caller holding
  * its own copy of the question is a caller that does not get told. There is one gate and every
  * insert goes through it.
+ *
+ * The caret is put in the fence by the same chain that makes it, which is what
+ * src/editor/Editor.tsx does for a table and for a rule and is here for the reason it is there: an
+ * insert leaves the selection at the end of what it inserted, and where that lands depends on what
+ * the caret was in beforehand. From an empty paragraph it is inside the new fence, which is why
+ * this looked right from a blank document and was found by nobody; from the middle of a paragraph
+ * the block is split and it is the half UNDER the fence, so the diagram somebody just asked for
+ * appears with the caret in the prose below it and the first line of the diagram is typed into
+ * their sentence. Measured both ways round before it was changed.
+ *
+ * The block is found by walking forward from where the selection was rather than by arithmetic on
+ * the transaction, exactly as the table does: an insert that split a paragraph moved everything
+ * after it, and the first mermaid fence at or after the old caret is the one that was just made
+ * whatever else the document holds.
  */
 export function insertMermaid(editor: Editor): boolean {
-  return place(editor, editor.schema.nodes.codeBlock, (chain) =>
-    chain.insertContent({ type: "codeBlock", attrs: { language: LANGUAGE, meta: null } }),
+  const codeBlock = editor.schema.nodes.codeBlock;
+  const searchFrom = Math.max(0, editor.state.selection.$from.pos - 1);
+
+  return place(editor, codeBlock, (chain) =>
+    chain
+      .insertContent({ type: "codeBlock", attrs: { language: LANGUAGE, meta: null } })
+      .command(({ tr, dispatch }) => {
+        if (!dispatch) return true;
+        let found: number | null = null;
+        tr.doc.nodesBetween(searchFrom, tr.doc.content.size, (node, pos) => {
+          if (found !== null) return false;
+          if (isDiagram(node)) found = pos;
+          return found === null;
+        });
+        // One position in is the first place text can go in a fence, and the fence is empty, so
+        // that is the whole of it.
+        if (found !== null) tr.setSelection(TextSelection.create(tr.doc, found + 1));
+        return true;
+      }),
   );
 }

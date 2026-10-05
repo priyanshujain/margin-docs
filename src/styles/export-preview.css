@@ -21,13 +21,16 @@
   box-shadow: none;
 }
 
+/* 14px at the ends, which is the title bar's. This bar stands directly under it and Save PDF sits
+   in the same column as the buttons up there, so the two rows have to agree on where the right
+   edge is. src/styles/viewer.css says the same thing for the same reason. */
 .preview-bar {
   flex: none;
   height: 52px;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 12px;
+  padding: 0 14px;
   background: var(--paper);
   border-bottom: 1px solid var(--line);
 }
@@ -105,7 +108,7 @@
 
 .preview-page {
   flex: none;
-  background: #fff;
+  background: var(--pdf-page);
   border-radius: 2px;
   box-shadow: var(--shadow-page);
   overflow: hidden;

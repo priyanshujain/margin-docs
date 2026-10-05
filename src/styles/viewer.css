@@ -1,0 +1,134 @@
+/* The pane a file the app can show and cannot edit is drawn in: a picture, or a PDF.
+
+   It stands where the sheet stands and is deliberately not one. A sheet is paper with a measure and
+   a page of prose on it; this is a window onto a file, so it fills the pane, keeps its own bar and
+   its own scroller, and the stage under it is --shell rather than --paper, which is the same choice
+   the export preview makes for the same reason: what is on the stage is not the app's own page.
+
+   Nothing here has a hover state or a cursor that suggests an edit, because there is no edit to
+   suggest. The only two controls are which size the picture is drawn at and handing the file to the
+   system app. */
+
+.viewer {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 14px at the ends, which is the title bar's, because this bar sits directly under it: the two
+   buttons here stand in the same column as the six up there, and a two pixel jog between two rows
+   of 28px buttons is the kind of thing nobody can name and everybody can see. */
+.viewer-bar {
+  flex: none;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+}
+
+.viewer-name {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-book);
+  font-size: var(--t-4);
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The dimensions, the page count and the size on disk, said once and quietly. Tabular figures so
+   that a number changing under a resize does not shuffle the buttons beside it. */
+.viewer-meta {
+  flex: none;
+  font-family: var(--font-ui);
+  font-size: var(--t-2);
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.viewer-stage {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 28px;
+  background: var(--shell);
+  display: flex;
+}
+
+/* Centred with auto margins rather than with justify-content, which is the difference between a
+   picture larger than the pane scrolling to its own left edge and one whose left edge cannot be
+   reached at all. */
+.viewer-image {
+  margin: auto;
+  display: block;
+}
+
+.viewer-stage[data-zoom="fit"] .viewer-image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+/* The pages of a PDF, top to bottom, scrolled continuously. A block rather than the flex box above
+   because these start at the top and are read downwards. */
+.viewer-pages {
+  display: block;
+}
+
+.viewer-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.viewer-page {
+  flex: none;
+  background: var(--pdf-page);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-page);
+  overflow: hidden;
+}
+
+.viewer-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.viewer-note {
+  margin: auto;
+  max-width: 48ch;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  font-family: var(--font-ui);
+  font-size: var(--t-3);
+  color: var(--ink-soft);
+  text-align: center;
+}
+
+/* A refusal is a sentence, so it wraps like one. The backend's ceiling message names the file and
+   the limit, and it is the whole of what the user is told. */
+.viewer-error {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+
+:root[data-compact] .viewer-stage {
+  padding: 14px;
+}
+
+:root[data-compact] .viewer-meta {
+  display: none;
+}

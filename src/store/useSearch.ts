@@ -1,11 +1,10 @@
 // Two independent searches sharing one store: quick open by filename and path (Cmd+P) and full
-// text across every open root (Cmd+Shift+F). Both read the SQLite index in Rust through
+// text across the open folder (Cmd+Shift+F). Both read the SQLite index in Rust through
 // src/api/index.ts (see docs/architecture.md); the query setters are plain local state.
 
 import { create } from "zustand";
 import { searchQuickOpen, searchText } from "../api";
 import type { MatchRange } from "../ipc";
-import { useWorkspace } from "./useWorkspace";
 
 export type QuickOpenPhase = "idle" | "loading" | "error";
 export type FullTextPhase = "idle" | "loading" | "error";
@@ -24,8 +23,7 @@ let fullTextSeq = 0;
 export interface QuickOpenHit {
   path: string;
   name: string;
-  rootPath: string;
-  /** The path relative to its root, which is the string the row shows. */
+  /** The path relative to the open folder, which is the string the row shows. */
   relPath: string;
   /** Half-open character offsets into `relPath`, for highlighting. */
   ranges: MatchRange[];
@@ -59,9 +57,6 @@ interface SearchState {
   reset: () => void;
 }
 
-const rootPathFor = (rootId: string): string =>
-  useWorkspace.getState().roots.find((r) => r.id === rootId)?.path ?? "";
-
 export const useSearch = create<SearchState>((set) => ({
   quickOpenQuery: "",
   quickOpenHits: [],
@@ -88,7 +83,6 @@ export const useSearch = create<SearchState>((set) => ({
         quickOpenHits: hits.map((hit) => ({
           path: hit.path,
           name: hit.name,
-          rootPath: rootPathFor(hit.root),
           relPath: hit.relPath,
           ranges: hit.ranges,
         })),

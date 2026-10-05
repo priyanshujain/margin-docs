@@ -17,9 +17,10 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode};
 use notify_debouncer_full::{
     new_debouncer_opt, DebounceEventResult, DebouncedEvent, Debouncer, NoCache,
 };
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, EventTarget, Manager, State, WebviewWindow};
 
 use crate::dto::WatchEvent;
+use crate::windows::Windows;
 use crate::Roots;
 
 /// Mirrors `WATCH_EVENT` in src/ipc.ts.
@@ -89,7 +90,7 @@ pub fn note_self_write<P: AsRef<Path>>(path: P) {
     }
 }
 
-/// The live watchers, keyed by root id.
+/// The live watchers, keyed by root id, plus one per standalone document keyed by its window.
 ///
 /// Dropping a debouncer stops its thread, so both `watch_stop` and closing a folder come down to a
 /// remove from this map and nothing else. The map is the only place a watcher is held: a watcher
@@ -98,7 +99,8 @@ pub fn note_self_write<P: AsRef<Path>>(path: P) {
 pub struct Watchers(pub Mutex<HashMap<String, Debouncer<RecommendedWatcher, NoCache>>>);
 
 /// Starts watching one open root, recursively. Idempotent: starting a watch that is already running
-/// is a no-op rather than a second watcher on the same folder.
+/// is a no-op rather than a second watcher on the same folder, which is also what lets two windows
+/// holding the same folder share one.
 ///
 /// Every debounced change is emitted as one `watch-event` carrying the root id, so the frontend can
 /// tell which tree to patch without matching path prefixes, and no path is ever the subject of more
@@ -128,10 +130,15 @@ pub struct Watchers(pub Mutex<HashMap<String, Debouncer<RecommendedWatcher, NoCa
 #[tauri::command]
 pub fn watch_start(
     app: AppHandle,
+    window: WebviewWindow,
+    windows: State<'_, Windows>,
     roots: State<'_, Roots>,
     watchers: State<'_, Watchers>,
     root_id: String,
 ) -> Result<(), String> {
+    if !windows.owns_root(window.label(), &root_id)? {
+        return Err(format!("no such root: {root_id}"));
+    }
     let root_path = roots.path_for(&root_id)?;
 
     let mut live = watchers.0.lock().map_err(|e| e.to_string())?;
@@ -165,12 +172,109 @@ pub fn watch_start(
 
 /// Stops the watcher for one root and drops it. Stopping a watch that is not running is a no-op, so
 /// the frontend can close a folder and stop its watcher without having to remember whether it ever
-/// started one.
+/// started one. A folder another window still has open keeps its watcher.
 #[tauri::command]
-pub fn watch_stop(watchers: State<'_, Watchers>, root_id: String) -> Result<(), String> {
+pub fn watch_stop(
+    window: WebviewWindow,
+    windows: State<'_, Windows>,
+    watchers: State<'_, Watchers>,
+    root_id: String,
+) -> Result<(), String> {
+    if windows.open_elsewhere(window.label(), &root_id)? {
+        return Ok(());
+    }
     let mut live = watchers.0.lock().map_err(|e| e.to_string())?;
     live.remove(&root_id);
     Ok(())
+}
+
+pub fn stop(app: &AppHandle, key: &str) {
+    if let Some(watchers) = app.try_state::<Watchers>() {
+        if let Ok(mut live) = watchers.0.lock() {
+            live.remove(key);
+        }
+    }
+}
+
+fn document_key(label: &str) -> String {
+    format!("document:{label}")
+}
+
+/// Watches a standalone document for changes made outside the app, replacing whatever that window
+/// was watching before.
+///
+/// The folder it sits in is watched rather than the file, and without recursion. Another editor
+/// saves by writing a temp file and renaming it over the document, which leaves a watch placed on
+/// the file itself pointing at an inode that is no longer the document; the folder sees the rename
+/// land. Everything else in the folder is ignored, since the window shows nothing else from it.
+pub fn watch_document(app: &AppHandle, label: &str, path: &Path) {
+    let handle = app.clone();
+    let target = label.to_string();
+    let shown = path.to_string_lossy().into_owned();
+    let sink = move |kind: &'static str| {
+        let event = WatchEvent {
+            root: String::new(),
+            path: shown.clone(),
+            kind: kind.to_string(),
+            old_path: None,
+        };
+        handle
+            .emit_to(EventTarget::webview_window(&target), WATCH_EVENT, &event)
+            .ok();
+    };
+    match spawn_document_watcher(path, sink) {
+        Ok(debouncer) => {
+            if let Some(watchers) = app.try_state::<Watchers>() {
+                if let Ok(mut live) = watchers.0.lock() {
+                    live.insert(document_key(label), debouncer);
+                }
+            }
+        }
+        Err(e) => eprintln!("{} will not update on its own: {e}", path.display()),
+    }
+}
+
+pub fn unwatch_document(app: &AppHandle, label: &str) {
+    stop(app, &document_key(label));
+}
+
+fn spawn_document_watcher<F>(
+    path: &Path,
+    sink: F,
+) -> Result<Debouncer<RecommendedWatcher, NoCache>, String>
+where
+    F: Fn(&'static str) + Send + 'static,
+{
+    let document = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
+    let folder = document
+        .parent()
+        .ok_or_else(|| format!("{} is not in a folder", document.display()))?
+        .to_path_buf();
+    let target = document.clone();
+    let handler = move |result: DebounceEventResult| {
+        let Ok(batch) = result else {
+            return;
+        };
+        let touched = batch
+            .iter()
+            .any(|event| event.need_rescan() || event.paths.iter().any(|path| path == &target));
+        if !touched || was_self_written(&target) {
+            return;
+        }
+        sink(if is_gone(&target) { "removed" } else { "modified" });
+    };
+    let mut debouncer: Debouncer<RecommendedWatcher, NoCache> = new_debouncer_opt(
+        DEBOUNCE,
+        None,
+        handler,
+        NoCache::new(),
+        notify::Config::default(),
+    )
+    .map_err(|e| e.to_string())?;
+    debouncer
+        .watch(&folder, RecursiveMode::NonRecursive)
+        .map_err(|e| e.to_string())?;
+    Ok(debouncer)
 }
 
 /// Watches `root_path` recursively and hands each debounced batch to `sink` as `watch-event`

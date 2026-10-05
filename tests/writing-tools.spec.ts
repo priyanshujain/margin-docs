@@ -99,6 +99,9 @@ async function open(page: Page, source: string, options: OpenOptions = {}): Prom
     if (unavailable) localStorage.setItem("margindocs-dev-no-writing-tools", "1");
   }, options.unavailable === true);
   await page.goto("/");
+  // The app opens on the start screen now, whatever the backend still had open, so the folder is
+  // chosen off the recents list seeded above before there is a tree to click a file in.
+  await page.locator(".start-row").first().click();
   await expect(page.locator(row(HANDBOOK))).toBeVisible();
   await page.locator(row(path)).click();
   await expect(page.locator(path === NOTES ? "textarea.plain-text" : ".prose")).toBeVisible();
@@ -214,7 +217,10 @@ async function runFromMenu(page: Page, command: string): Promise<void> {
 
 /** The other way in, and the one that cannot preserve a selection. */
 async function runFromPalette(page: Page, label: string): Promise<void> {
-  await page.keyboard.press("Meta+k");
+  // Cmd+Shift+P since the palette gave Cmd+K up to the link tool, which is where a Google Docs
+  // user reaches for it. The capital is what a shifted key really arrives as; tests/shortcuts.spec
+  // .ts says why Playwright has to be told that in so many words.
+  await page.keyboard.press("Meta+Shift+P");
   await page.locator(".palette-field").fill(label);
   // The row about to run is the row this test means, rather than whatever fuzzy matching put at the
   // top today.
@@ -431,6 +437,7 @@ test("with no document open it says to open one", async ({ page }) => {
     localStorage.setItem("margindocs-recents", JSON.stringify(["/Users/you/Documents/Handbook"]));
   });
   await page.goto("/");
+  await page.locator(".start-row").first().click();
   await expect(page.locator(row(HANDBOOK))).toBeVisible();
   await expect(page.locator(".prose")).toHaveCount(0);
 

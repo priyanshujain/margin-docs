@@ -53,14 +53,79 @@ real links are involved.
 
 One editor instance, one parsed frontmatter, one set of raw nodes, one dirty flag. A tab bar would
 let a document sit half-edited in the background, invisible, while attention moved elsewhere, which
-is exactly the kind of silent state the file contract above is trying to rule out. Multiple roots
-open at once is about how much of the disk you can see; one document open at a time is about how
-much of it you are allowed to be quietly changing.
+is exactly the kind of silent state the file contract above is trying to rule out. The open folder
+is about how much of the disk you can see; one document open at a time is about how much of it you
+are allowed to be quietly changing.
+
+## Why one folder at a time, and why a launch opens on a list
+
+The shell used to hold several folders at once, stacked as separate trees down one sidebar, and put
+every one of them back on the next launch. Both halves were wrong in the same way. Two projects in
+one sidebar means every command that acts on a folder has to ask which one, so New Document, Close
+Folder and Find in Files each grew a guess or a refusal about a question the person reading the
+screen already knew the answer to. And a window that comes back holding last week's project is a
+window you have to close something in before you can start today's.
+
+So the model is a code editor's: one project open, and the way out of it is the way back in.
+Closing the folder puts the start screen back, which is the list of folders this app has opened,
+most recent first, and picking one off it replaces whatever was there. Rust still holds roots as a
+list and does not have to change for any of this; what changed is that the window models one of
+them.
+
+The cost is real and worth naming. Two folders cannot be searched at once, and a relative link from
+a document in one folder to a document in another is a link the sidebar cannot follow. Both were
+already true of anything outside the folders that happened to be open, and neither is worth what
+the sidebar was paying for them.
+
+## Why the outline is a rail in the margin and not a panel in the sidebar
+
+The headings of the open document are drawn the way Notion draws them: a column of short ticks at
+the right edge of the page, one per heading, longer for a section and shorter for what sits under
+it, the one the reader is in darker than the rest. Putting the pointer on the ticks turns them into
+the titles, in a small list in the same corner, and a click on a title puts the caret in that
+heading with the heading at the top of the pane. The list closes when the pointer leaves. On a
+keyboard the rail is one tab stop and the arrows walk the list; on a finger a tap pins it and a tap
+elsewhere lets it go.
+
+It is not a section of the sidebar, and the first version was. The sidebar is the folder, and the
+outline is the document: a list of sections under a list of files reads as more files, takes a
+share of a column that is already short on tall trees, and is on screen whether or not anybody is
+looking for it. The margin the sheet leaves beside the measure costs nothing, the ticks say
+"this document has sections" and no more until asked, and the answer arrives under the pointer
+where the question was put. The toggle that hides the rail exists for a window too narrow to have a
+margin, and it is remembered.
+
+Which tick is the reader's is measured against the pane rather than taken from the caret: the last
+heading that has scrolled into the top third of the pane, or the last of all once the pane is at its
+end. The rail is looked at while scrolling through a document, and the caret can be pages away from
+what is on screen. The rows themselves are read off the editor's live tree on every change rather
+than off the file, so they are true of the document a keystroke ago, and each carries a position in
+that tree rather than its words, which is what lets two sections share a title.
+
+Only the document's own children are in it. A heading inside a quote or a callout is a heading in
+somebody else's block, one inside a list is a list item wearing a hat, and one inside a toggle is
+text the toggle may be hiding, so jumping to it would land the caret somewhere the page does not
+show. The indent is by the headings above a row rather than by its level number, so a document that
+starts at `##` does not start one step in and a skipped level is one step rather than two. An empty
+heading is left out until it says something, and a document with no headings has no rail, since a
+rail of nothing is a mark on the page for no reason.
 
 ## Visual language
 
 Lifted from margin unchanged, the same way margin-calendar's is: warm paper surfaces, ink and two
-softer ink tones, hairline borders, a four-step type scale, three radii, one easing curve, light and
-dark driven by `data-theme` on the root. Margin Docs adds nothing to that layer; it is a sibling
+softer ink tones, hairline borders, a four-step type scale, three radii, one easing curve, the
+palette driven by `data-theme` on the root. Margin Docs adds nothing to that layer; it is a sibling
 application, not a new visual identity, and the token file is the proof of that rather than a
 description of it.
+
+What it does add is more palettes to swap in there. Beside margin's own light and dark, whose values
+are untouched, `src/styles/themes.css` holds a sepia, a cool near white, a warm high contrast light,
+a flat charcoal and a deep blue black with one saturated accent. None of them is a second design:
+each is the same thirty five variables with different values, and a palette that leaves one out does
+not fail loudly, it inherits a colour from the light one and looks wrong in a corner nobody opens,
+which is why `src/theme.test.ts` reads the stylesheets rather than trusting whoever added the last
+one. Choosing is done in Settings, from a grid of tiles each drawn in the palette it is offering,
+and it applies on the click rather than behind a save button, because a colour is a thing you judge
+by looking at it. "Match system" resolves `prefers-color-scheme` to whichever light and dark palette
+were last chosen, and that media query is the only one in the app allowed near a colour. The title
+bar has no sun and moon on it any more: two palettes fit on one button and seven do not.

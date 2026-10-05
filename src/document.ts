@@ -50,6 +50,7 @@ import {
 import { documentKindForPath, type MarkdownDocument } from "./model/doc";
 import { useDocument } from "./store/useDocument";
 import { notify } from "./store/useToast";
+import { useViewer } from "./store/useViewer";
 
 /** Long enough that a sentence is one save, short enough that Cmd+Tab away is already on disk. */
 export const SAVE_DEBOUNCE_MS = 500;
@@ -331,9 +332,15 @@ export function initDocument(): () => void {
 /**
  * Reads a file and puts it in the store. Reads only: the bridge is pure, nothing here has a path
  * to `fileWrite`, and a document that is opened and closed again leaves the file untouched.
+ *
+ * The picture or PDF that may be on screen goes first, and it is done here rather than in the
+ * store's `open` because this is the one function every document that reaches the pane comes
+ * through: quick open and the sidebar go through `open`, back and forward do not, and a viewer left
+ * standing behind either of them would be a second thing claiming the pane.
  */
 export async function loadDocument(path: string): Promise<void> {
   initDocument();
+  useViewer.getState().close();
   const { parse } = bridgeFor(path);
   const read = await fileRead(path);
   apply(read, parse(read.text, read.path));

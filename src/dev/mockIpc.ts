@@ -66,19 +66,6 @@ function stamp(): number {
 let writeGate: Promise<void> | null = null;
 let openGate: (() => void) | null = null;
 
-/**
- * A first launch, which the fixture otherwise has no way to show: it is seeded with two open
- * folders, so the empty state somebody new actually opens on was the one screen nobody could look
- * at. With this set there are no roots and the tree comes back empty.
- */
-const firstRun = (): boolean => {
-  try {
-    return localStorage.getItem("margindocs-dev-empty") === "1";
-  } catch {
-    return false;
-  }
-};
-
 function entryAt(path: string): DevEntry {
   const entry = entries.get(path);
   if (!entry) throw new Error(`no such file: ${path}`);
@@ -130,6 +117,18 @@ function freePath(parent: string, name: string): string {
     const next = joinPath(parent, `${stem} ${n}${ext}`);
     if (!entries.has(next)) return next;
   }
+}
+
+/**
+ * A binary fixture file, as bytes. `atob` rather than a dependency, because this module only ever
+ * runs in a browser and the alternative is shipping a decoder into a file whose whole point is that
+ * it is not shipped.
+ */
+function bytesOf(entry: DevEntry): ArrayBuffer {
+  const binary = atob(entry.data);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) out[i] = binary.charCodeAt(i);
+  return out.buffer;
 }
 
 function put(entry: DevEntry): DevEntry {
@@ -255,8 +254,11 @@ const noWritingTools = (): boolean => {
 export async function mockCall<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const a = (args ?? {}) as Record<string, never>;
   switch (command) {
+    // Seeded with the two folders the fixture ships, which stands for what Rust persists across a
+    // relaunch. The app closes every one of them on launch and opens whichever the user picks off
+    // the start screen, so what a test sees after boot is an empty list either way.
     case "roots_list":
-      return (firstRun() ? [] : roots) as unknown as T;
+      return roots as unknown as T;
 
     case "root_open": {
       const path = a.path as unknown as string;
@@ -270,7 +272,7 @@ export async function mockCall<T>(command: string, args?: Record<string, unknown
       };
       roots.push(opened);
       if (!entries.has(path)) {
-        put({ path, dir: true, text: "", binary: false, modifiedMs: Date.now() });
+        put({ path, dir: true, text: "", binary: false, data: "", modifiedMs: Date.now() });
       }
       return opened as unknown as T;
     }
@@ -309,6 +311,17 @@ export async function mockCall<T>(command: string, args?: Record<string, unknown
       console.info(`dev mock: ${command} ${a.path as unknown as string}`);
       return undefined as T;
 
+    // The bytes of a file the app shows and cannot edit. There is no timestamp in the answer and no
+    // command to hand one back to, which is the whole difference from `file_read`.
+    case "file_bytes": {
+      const entry = entryAt(a.path as unknown as string);
+      if (entry.dir) throw new Error(`not a file: ${entry.path}`);
+      if (!entry.binary) {
+        return new TextEncoder().encode(entry.text).buffer as unknown as T;
+      }
+      return bytesOf(entry) as unknown as T;
+    }
+
     case "file_read": {
       const entry = entryAt(a.path as unknown as string);
       if (entry.dir || entry.binary) throw new Error(`not a text file: ${entry.path}`);
@@ -344,14 +357,14 @@ export async function mockCall<T>(command: string, args?: Record<string, unknown
     case "file_create": {
       const path = freePath(a.parentPath as unknown as string, a.name as unknown as string);
       return nodeFor(
-        put({ path, dir: false, text: "", binary: false, modifiedMs: stamp() }),
+        put({ path, dir: false, text: "", binary: false, data: "", modifiedMs: stamp() }),
       ) as unknown as T;
     }
 
     case "file_folder_create": {
       const path = freePath(a.parentPath as unknown as string, a.name as unknown as string);
       return nodeFor(
-        put({ path, dir: true, text: "", binary: false, modifiedMs: stamp() }),
+        put({ path, dir: true, text: "", binary: false, data: "", modifiedMs: stamp() }),
       ) as unknown as T;
     }
 
@@ -384,10 +397,10 @@ export async function mockCall<T>(command: string, args?: Record<string, unknown
     case "asset_write": {
       const folder = joinPath(dirName(a.docPath as unknown as string), "assets");
       if (!entries.has(folder)) {
-        put({ path: folder, dir: true, text: "", binary: false, modifiedMs: stamp() });
+        put({ path: folder, dir: true, text: "", binary: false, data: "", modifiedMs: stamp() });
       }
       const path = freePath(folder, (a.name as unknown as string) || "image.png");
-      put({ path, dir: false, text: "", binary: true, modifiedMs: stamp() });
+      put({ path, dir: false, text: "", binary: true, data: "", modifiedMs: stamp() });
       return {
         path,
         relPath: `assets/${baseName(path)}`,
@@ -639,10 +652,25 @@ export const external = {
     return [watchEventFor(from, "removed"), watchEventFor(to, "created")];
   },
 
-  /** What is actually on disk now, for asserting that the app has written nothing it should not. */
+  /**
+   * What is actually on disk now, for asserting that the app has written nothing it should not.
+   * Text for a document and base64 for a picture or a PDF, so the same question can be asked about
+   * a file the app can only look at.
+   */
   read(path: string): string | null {
     const entry = entries.get(path);
-    return entry && !entry.dir ? entry.text : null;
+    if (!entry || entry.dir) return null;
+    return entry.binary ? entry.data : entry.text;
+  },
+
+  /**
+   * The file's modification time. Every write in this fixture moves it, so a test that reads it
+   * either side of a gesture is asking whether anything wrote at all, which is a stronger question
+   * than whether the bytes came out the same.
+   */
+  modified(path: string): number | null {
+    const entry = entries.get(path);
+    return entry ? entry.modifiedMs : null;
   },
 
   exists(path: string): boolean {

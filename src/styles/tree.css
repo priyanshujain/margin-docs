@@ -61,12 +61,6 @@
   gap: 2px;
 }
 
-.sidebar-empty {
-  margin: 10px 22px;
-  font-size: var(--t-2);
-  color: var(--ink-faint);
-}
-
 .pane-resizer {
   flex: none;
   width: 0;
@@ -246,8 +240,15 @@ button.tree-twisty:hover {
   outline: none;
 }
 
+/* Nudged in far enough that its glyph stands in the same column as the two in the sidebar's own
+   header, which is 5px because the button is 22px around a 16px glyph and those are 28px around
+   the same 16px. Without it the row's dots hang five pixels past the pane's toolbar, which is only
+   ever visible on hover and is exactly the kind of thing that reads as the app not being finished.
+   The margin rather than the row's padding, so a row with nothing showing keeps the same edge as
+   one with the dots out, which is what .chapter does two files up. */
 .tree-row .row-menu-btn {
   flex: none;
+  margin-right: 5px;
   opacity: 0;
 }
 
@@ -420,11 +421,18 @@ button.tree-twisty:hover {
   padding: 0;
 }
 
+.start-item {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .start-row {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 9px 10px;
   border-radius: var(--r-sm);
   color: var(--ink-soft);
@@ -433,6 +441,31 @@ button.tree-twisty:hover {
 }
 
 .start-row:hover {
+  background: var(--accent-wash);
+  color: var(--ink);
+}
+
+/* Kept off the page until the row is under the pointer or the keyboard, so a list somebody is
+   reading is a list of folders rather than a column of buttons for throwing them away. */
+.start-forget {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-sm);
+  color: var(--ink-faint);
+  opacity: 0;
+  transition: opacity 120ms var(--ease), background 120ms var(--ease), color 120ms var(--ease);
+}
+
+.start-item:hover .start-forget,
+.start-forget:focus-visible {
+  opacity: 1;
+}
+
+.start-forget:hover {
   background: var(--accent-wash);
   color: var(--ink);
 }
@@ -668,6 +701,14 @@ button.tree-twisty:hover {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+/* The label is the sidebar's, spaced there for a sidebar gutter, and the sheet's body already has
+   a gutter of its own. Without this the six section headings stand 22px right of every row they
+   head. The settings column, the backlinks list and the start screen each make the same
+   correction where they borrow it. */
+.key-group .nav-label {
+  padding: 0 0 2px;
 }
 
 .key-list {

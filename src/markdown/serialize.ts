@@ -4,11 +4,15 @@
 // indentation and every other detail of "is this valid markdown" is decided by the same library
 // that read the file rather than by string concatenation here.
 //
-// Two things bypass mdast on purpose. A raw block is written from its text content with no
+// Three things bypass mdast on purpose. A raw block is written from its text content with no
 // escaping at all, because those are the file's own bytes and the only correct thing to do with
 // them is nothing. A link that was a bare url in the source is written back as a bare url, through
 // an inline html node, because mdast would otherwise spell every plain `https://` in a README as
-// `[https://x](https://x)` and put a diff in front of the user that they did not ask for.
+// `[https://x](https://x)` and put a diff in front of the user that they did not ask for. And the
+// two colour marks go out as the pair of html tags markdown has no delimiter for, which is the one
+// construct here whose spelling is this app's invention rather than something a file already said:
+// `<span style="color: #rrggbb">` and `<mark style="background-color: #rrggbb">`, written that way
+// character for character because src/markdown/parse.ts reads back that way and nothing else.
 //
 // Writing a url bare is never assumed to be safe. GFM's literal autolink grammar has far more
 // corners than a pair of regular expressions here could hold, and every corner it got wrong cost a
@@ -60,6 +64,7 @@ import type { Mark, Node as ProseMirrorNode } from "@tiptap/pm/model";
 import type { BlockContent, DefinitionContent, List, ListItem, PhrasingContent, Root, RootContent, TableCell, TableRow } from "mdast";
 import { CALLOUT_LABELS, isRawUnchanged, rawOutput } from "../model/doc";
 import type { CalloutKind, ColumnAlign } from "../model/doc";
+import { isDocumentColor } from "../model/colors";
 import type { MarkName } from "../model/schema";
 import { parseToMdast, rawBlock, stringifyMdast, withOtherBullet, withOtherRule, withWideItems } from "./handlers";
 import { isFrontmatterNode, normaliseSource } from "./frontmatter";
@@ -71,8 +76,15 @@ import { buildDoc, escapeSummary } from "./parse";
  * ProseMirror holds marks as a set, so `**_x_**` and `_**x**_` arrive here identical and one of
  * them has to win. Fixing the order is what makes the second save of a file produce the same bytes
  * as the first. Code is last because it is a leaf rather than a wrapper.
+ *
+ * The two colours sit just inside the link and outside the rest, and that was a free choice right
+ * up until it was made. `**<span ...>x</span>**` and `<span ...>**x**</span>` are one document with
+ * two spellings, and the tags read back either way round, so nothing about markdown decides it. The
+ * decision is that one of them is the spelling and the other is not: this line is the one, and
+ * src/markdown/parse.ts refuses everything else rather than reading a file it did not write and
+ * handing it back with the tags moved on a save the user made in another paragraph.
  */
-const MARK_ORDER: MarkName[] = ["link", "strikethrough", "strong", "em", "code"];
+const MARK_ORDER: MarkName[] = ["link", "highlight", "textColor", "strikethrough", "strong", "em", "code"];
 
 /**
  * The two shapes a bare url can have, used only to keep hopeless candidates out of the verifier.
@@ -525,24 +537,31 @@ function nest(leaves: Leaf[], depth: number): PhrasingContent[] {
     let j = i + 1;
     while (j < leaves.length && leaves[j].marks[depth]?.eq(mark)) j += 1;
     const children = nest(leaves.slice(i, j), depth + 1);
-    out.push(wrap(mark, children));
+    out.push(...wrap(mark, children));
     i = j;
   }
   return out;
 }
 
-function wrap(mark: Mark, children: PhrasingContent[]): PhrasingContent {
+/**
+ * One mark as the nodes it takes to write it, which is one node for every mark markdown has a
+ * delimiter for and three for the two it does not.
+ */
+function wrap(mark: Mark, children: PhrasingContent[]): PhrasingContent[] {
   switch (mark.type.name) {
     case "strong":
-      return { type: "strong", children };
+      return [{ type: "strong", children }];
     case "em":
-      return { type: "emphasis", children };
+      return [{ type: "emphasis", children }];
     case "strikethrough":
-      return { type: "delete", children };
+      return [{ type: "delete", children }];
+    case "textColor":
+    case "highlight":
+      return colored(mark, children);
     default: {
       const link: PhrasingContent = { type: "link", url: mark.attrs.href ?? "", title: mark.attrs.title ?? null, children };
       const text = ownText(mark, children);
-      if (text === null) return link;
+      if (text === null) return [link];
 
       // Two rungs, and a candidate that can only reach the second one is still a candidate. The
       // angle form carries every scheme a file can write and the bare form carries four of them,
@@ -550,14 +569,36 @@ function wrap(mark: Mark, children: PhrasingContent[]): PhrasingContent {
       // other autolink a user typed that this writer would otherwise spell out longhand.
       const bare = bareForm(mark, text);
       const angle = angleForm(mark, text);
-      if (bare === null && angle === null) return link;
+      if (bare === null && angle === null) return [link];
 
       const index = bareSeen++;
       const node = spellingFor(index, bare, angle) ?? link;
       candidateOf.set(node, index);
-      return node;
+      return [node];
     }
   }
+}
+
+/**
+ * A colour, as the pair of html tags markdown has no delimiter for.
+ *
+ * The tags are `html` nodes rather than text, so mdast writes them as they stand and escapes
+ * nothing inside them, and `stringifyMdast` retypes them to `phrasingLiteral` on the way to the
+ * writer. That retype is not cosmetic. `containerPhrasing` turns a soft line break in front of
+ * inline html into a space, which is the right rule for a tag somebody typed and wrong for one this
+ * file wrote, and a colour that ends on a line ending puts its closing tag exactly there: the
+ * user's hard wrap would come back as a space, on a paragraph they only pressed a swatch in.
+ *
+ * A mark carrying no colour writes nothing at all rather than a tag with `null` in it. There is no
+ * way to make one through the toolbar, and a mark with nothing to say is not worth a byte of
+ * somebody's file, let alone bytes this reader would hand back as text.
+ */
+function colored(mark: Mark, children: PhrasingContent[]): PhrasingContent[] {
+  const color = mark.attrs.color;
+  if (!isDocumentColor(color)) return children;
+  const open = mark.type.name === "highlight" ? `<mark style="background-color: ${color}">` : `<span style="color: ${color}">`;
+  const close = mark.type.name === "highlight" ? "</mark>" : "</span>";
+  return [{ type: "html", value: open }, ...children, { type: "html", value: close }];
 }
 
 /**
@@ -1071,6 +1112,20 @@ function needsProof(nodes: RootContent[] | AnyNode[]): boolean {
 const BLANK_LINE = /[\r\n][ \t]*[\r\n]/;
 const SPANS: ReadonlySet<string> = new Set(["inlineCode", "inlineMath", "wrappedCode", "wrappedMath"]);
 
+/**
+ * A colour tag, which is a piece of html this file wrote and therefore a place a reader can differ
+ * from it.
+ *
+ * Every other inline html node here is characters in the middle of a line: a `[!NOTE]` label, a
+ * bare url. A tag is not, and markdown has one rule about where a tag may stand that nothing else
+ * in this file runs into. A complete tag alone on the first line of a block is an html block, and
+ * everything under it down to the next blank line goes with it, so a colour whose first character
+ * is a line ending would be written as a paragraph the reader hands back as html. It is a corner
+ * nothing in the corpus reaches and the ladder is what proves it, one re-parse per block that has a
+ * colour in it, which is a price only a document that uses colour ever pays.
+ */
+const COLOR_TAG = /^<\/?(?:span|mark)[ >]/;
+
 function proofOf(node: AnyNode): boolean {
   // A fence and a `$$` block are the two places a line ending is ordinary, and both of them are
   // written with a fence that grows past whatever is inside it.
@@ -1078,7 +1133,7 @@ function proofOf(node: AnyNode): boolean {
   if (node.type === "heading") return brokenHeading(node);
   const value = typeof node.value === "string" ? node.value : "";
   if (SPANS.has(node.type) && LINE_ENDING.test(value)) return true;
-  if (node.type === "html" && LINE_ENDING.test(value)) return true;
+  if (node.type === "html" && (LINE_ENDING.test(value) || COLOR_TAG.test(value))) return true;
   if (node.type === "text" && BLANK_LINE.test(value)) return true;
   return needsProof(node.children ?? []);
 }

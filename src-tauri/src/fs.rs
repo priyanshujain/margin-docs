@@ -21,13 +21,14 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ignore::{DirEntry, WalkBuilder};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State, WebviewWindow};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::dto::{
     AssetResult, Backlink, FileNode, IndexStatus, QuickOpenHit, ReadResult, RootInfo, SearchHit,
     WriteResult,
 };
+use crate::windows::{Access, Windows};
 use crate::Roots;
 
 /// Skipped whatever the folder's own gitignore says, because not one of the four is ever a
@@ -44,6 +45,17 @@ pub(crate) const ALWAYS_SKIPPED: [&str; 4] = [".git", "node_modules", "target", 
 const MARKDOWN_EXTENSIONS: [&str; 5] = ["md", "markdown", "mdown", "mkd", "mkdn"];
 const TEXT_EXTENSIONS: [&str; 2] = ["txt", "text"];
 
+/// How large a file `read_bytes` will hand across the IPC boundary.
+///
+/// The viewers read a whole file into memory, copy it into the response and copy it again into a
+/// blob on the other side, so the number is really three times itself while the read is in flight.
+/// Sixty four megabytes is past every screenshot and every ordinary PDF and a long way short of the
+/// scanned four hundred megabyte one that would spend a minute in that copy chain with a frozen
+/// window in front of it. A refusal with a sentence in it and Open in Default App still on the row
+/// menu is a better answer than a beachball, since the system's own viewer opens that file lazily
+/// and this one cannot.
+pub const MAX_VIEW_BYTES: u64 = 64 * 1024 * 1024;
+
 /// Where the open folders are remembered between launches, inside the app data directory and never
 /// inside a folder the user opened.
 const ROOTS_FILE: &str = "roots.json";
@@ -59,12 +71,14 @@ const FALLBACK_ASSET_NAME: &str = "image.png";
 // well as writes.
 //
 // A path is accepted only when it holds no `..` component at all and, once symlinks have been
-// resolved, sits inside a folder that is currently open. Canonicalising first is what makes the
+// resolved, sits inside a folder the asking window has open. Canonicalising first is what makes the
 // second half mean anything: without it both `~/notes/../../.ssh/id_rsa` and a symlink pointing at
 // /etc read as being inside the root. A path that does not exist yet is resolved against its
 // deepest existing ancestor and the remaining components are appended, so creating a file is
 // checked exactly as strictly as writing one. With no folder open nothing is inside a root, so
-// every path is rejected, which is the right default rather than an inconvenience.
+// every path is rejected, which is the right default rather than an inconvenience. A window holding
+// one standalone document may also read and write that file, and look at the folder it sits in so
+// its relative images still draw, but it never gets to create, move or delete anything there.
 
 fn path_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
@@ -191,15 +205,29 @@ pub fn resolve_in_roots(root_paths: &[String], raw: &str) -> Result<PathBuf, Str
     Err(format!("path is outside every open folder: {raw}"))
 }
 
-/// The lock is taken and dropped before any filesystem call, so a slow disk never blocks a command
+/// The locks are taken and dropped before any filesystem call, so a slow disk never blocks a command
 /// that only wants to know which folders are open.
-fn open_root_paths(roots: &State<'_, Roots>) -> Result<Vec<String>, String> {
-    let open = roots.0.lock().map_err(|e| e.to_string())?;
-    Ok(open.iter().map(|root| root.path.clone()).collect())
+fn checked(
+    window: &WebviewWindow,
+    windows: &Windows,
+    roots: &Roots,
+    access: Access,
+    raw: &str,
+) -> Result<PathBuf, String> {
+    resolve_in_roots(&windows.allowed(roots, window.label(), access)?, raw)
 }
 
-fn checked(roots: &State<'_, Roots>, raw: &str) -> Result<PathBuf, String> {
-    resolve_in_roots(&open_root_paths(roots)?, raw)
+/// A root this window has open. Another window's folder is as closed as one nobody opened.
+fn owned_root(
+    window: &WebviewWindow,
+    windows: &Windows,
+    roots: &Roots,
+    root_id: &str,
+) -> Result<String, String> {
+    if !windows.owns_root(window.label(), root_id)? {
+        return Err(format!("no such root: {root_id}"));
+    }
+    roots.path_for(root_id)
 }
 
 /// One lock per document being written, so two saves of one file cannot interleave.
@@ -541,6 +569,35 @@ pub fn read_document(path: &Path) -> Result<ReadResult, String> {
     })
 }
 
+/// The bytes of a file, whole, for the surfaces that show a file rather than edit one: an image or
+/// a PDF drawn in the editor pane.
+///
+/// The root guard is in here rather than in the command, which is the shape `pdf::compile` already
+/// uses and for the same reason: a guard the test suite has to reach through a `State` is a guard
+/// the test suite ends up asserting about in isolation, and a guard proved in isolation is the one
+/// kind this project has shipped switched off before. Everything the command does is in this
+/// function, so a test that calls it is running what the frontend runs.
+///
+/// Nothing is written, no lock is taken and no sidecar appears, exactly as for `read_document`.
+pub fn read_bytes(root_paths: &[String], raw: &str) -> Result<Vec<u8>, String> {
+    let path = resolve_in_roots(root_paths, raw)?;
+    let meta = fs::metadata(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if meta.is_dir() {
+        return Err(format!("not a file: {}", path.display()));
+    }
+    // Asked of the metadata rather than of the bytes, so an enormous file is refused before any of
+    // it is read rather than after all of it has been.
+    if meta.len() > MAX_VIEW_BYTES {
+        return Err(format!(
+            "{} is {} MB. This window shows files up to {} MB; open it with the system app instead.",
+            path.display(),
+            meta.len() / (1024 * 1024),
+            MAX_VIEW_BYTES / (1024 * 1024),
+        ));
+    }
+    fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))
+}
+
 pub fn write_document(
     path: &Path,
     text: &str,
@@ -754,46 +811,49 @@ fn save_roots(app: &AppHandle, roots: &[RootInfo]) -> Result<(), String> {
     atomic_write(&file, text.as_bytes())
 }
 
-/// Every folder currently open, in the order they were opened, which is the order the sidebar
-/// lists them in.
-///
-/// The list outlives a relaunch, so the first call after launch reads it back from the app data
-/// directory and fills the managed state from it. A root whose folder has since been deleted,
-/// renamed or unmounted is dropped rather than handed back as a row that cannot be expanded.
+/// The folders the asking window has open, in the order they were opened, which is the order the
+/// sidebar lists them in. A folder whose directory has since been deleted, renamed or unmounted is
+/// left out rather than handed back as a row that cannot be expanded.
 #[tauri::command]
-pub fn roots_list(app: AppHandle, roots: State<'_, Roots>) -> Result<Vec<RootInfo>, String> {
-    let mut open = roots.0.lock().map_err(|e| e.to_string())?;
-    if open.is_empty() {
-        *open = load_roots(&app);
-    }
-    let before = open.len();
-    open.retain(|root| Path::new(&root.path).is_dir());
-    if open.len() != before {
-        save_roots(&app, &open)?;
-    }
-    Ok(open.clone())
+pub fn roots_list(
+    window: WebviewWindow,
+    windows: State<'_, Windows>,
+    roots: State<'_, Roots>,
+) -> Result<Vec<RootInfo>, String> {
+    let ids = windows.roots_of(window.label())?;
+    let open = roots.0.lock().map_err(|e| e.to_string())?;
+    Ok(open
+        .iter()
+        .filter(|root| ids.contains(&root.id) && Path::new(&root.path).is_dir())
+        .cloned()
+        .collect())
 }
 
-/// Adds `path` to the open roots and returns it. Idempotent: opening a folder that is already open
-/// returns the entry that is already there rather than a second copy of it.
+/// Adds `path` to the asking window's folders and returns it. Idempotent: opening a folder that is
+/// already open, in this window or another, returns the entry that is already there, and the
+/// watcher and index rows that go with it are shared rather than started twice.
 ///
 /// `id` is derived from the path and from nothing else, so the same folder is the same root across
 /// relaunches and the frontend can address a root without carrying its path around. Opening a
 /// folder never writes anything into it, and that includes not creating it: a `path` that is not
 /// an existing directory is an error, not a mkdir.
 #[tauri::command]
-pub fn root_open(app: AppHandle, roots: State<'_, Roots>, path: String) -> Result<RootInfo, String> {
+pub fn root_open(
+    app: AppHandle,
+    window: WebviewWindow,
+    windows: State<'_, Windows>,
+    roots: State<'_, Roots>,
+    path: String,
+) -> Result<RootInfo, String> {
     let canonical = fs::canonicalize(&path).map_err(|e| format!("{path}: {e}"))?;
     if !canonical.is_dir() {
         return Err(format!("not a folder: {}", canonical.display()));
     }
     let path = path_string(&canonical);
     let id = root_id_for(&path);
+    windows.add_root(window.label(), &id)?;
 
     let mut open = roots.0.lock().map_err(|e| e.to_string())?;
-    if open.is_empty() {
-        *open = load_roots(&app);
-    }
     if let Some(existing) = open.iter().find(|root| root.id == id) {
         return Ok(existing.clone());
     }
@@ -817,24 +877,54 @@ pub fn root_open(app: AppHandle, roots: State<'_, Roots>, path: String) -> Resul
     Ok(info)
 }
 
-/// Forgets a root and persists the shorter list. Touches nothing inside the folder itself.
-///
-/// Stopping the watcher is not done here. The frontend calls `watch_stop` for the same root, which
-/// keeps this module from having to know that the watcher exists.
+/// Takes a folder out of the asking window. Touches nothing inside the folder itself, and while any
+/// other window still has it open its watcher and its index rows stay exactly as they are.
 #[tauri::command]
-pub fn root_close(app: AppHandle, roots: State<'_, Roots>, root_id: String) -> Result<(), String> {
-    let mut open = roots.0.lock().map_err(|e| e.to_string())?;
+pub fn root_close(
+    app: AppHandle,
+    window: WebviewWindow,
+    windows: State<'_, Windows>,
+    root_id: String,
+) -> Result<(), String> {
+    if !windows.remove_root(window.label(), &root_id)? {
+        drop_root(&app, &root_id);
+    }
+    Ok(())
+}
+
+/// Forgets a root nobody has open any more: out of the list, out of the index, and no longer watched.
+pub fn drop_root(app: &AppHandle, root_id: &str) {
+    let roots = app.state::<Roots>();
+    let Ok(mut open) = roots.0.lock() else {
+        return;
+    };
     let before = open.len();
     open.retain(|root| root.id != root_id);
-    if open.len() == before {
-        return Ok(());
+    if open.len() != before {
+        if let Err(e) = save_roots(app, &open) {
+            eprintln!("could not save the open folders: {e}");
+        }
     }
-    save_roots(&app, &open)?;
     drop(open);
+    crate::watch::stop(app, root_id);
     // The rows go with the folder. Nothing can be opened from a search result that belongs to a
     // folder that is no longer there to open it in.
-    crate::index::forget_root(&app, &root_id);
-    Ok(())
+    crate::index::forget_root(app, root_id);
+}
+
+/// Run once at launch. Whatever the last session still had open is closed in every window that held
+/// it, so its index rows go now rather than lingering behind a start screen that never mentions them.
+pub fn forget_stale_roots(app: &AppHandle) {
+    let stale = load_roots(app);
+    if stale.is_empty() {
+        return;
+    }
+    for root in &stale {
+        crate::index::forget_root(app, &root.id);
+    }
+    if let Err(e) = save_roots(app, &[]) {
+        eprintln!("could not clear last session's folders: {e}");
+    }
 }
 
 /// The whole tree for one root in a single pass, the root node itself included. Empty `children`
@@ -847,8 +937,13 @@ pub fn root_close(app: AppHandle, roots: State<'_, Roots>, root_id: String) -> R
 /// name, case insensitively, so the tree does not reshuffle itself between two reads of an
 /// unchanged folder.
 #[tauri::command(async)]
-pub fn tree_read(roots: State<'_, Roots>, root_id: String) -> Result<FileNode, String> {
-    let path = roots.path_for(&root_id)?;
+pub fn tree_read(
+    window: WebviewWindow,
+    windows: State<'_, Windows>,
+    roots: State<'_, Roots>,
+    root_id: String,
+) -> Result<FileNode, String> {
+    let path = owned_root(&window, &windows, &roots, &root_id)?;
     scan_tree(Path::new(&path), false)
 }
 
@@ -869,11 +964,13 @@ pub fn tree_read(roots: State<'_, Roots>, root_id: String) -> Result<FileNode, S
 /// partial rather than rewrite the first `limit` files and report a finished job.
 #[tauri::command(async)]
 pub fn sweep_documents(
+    window: WebviewWindow,
+    windows: State<'_, Windows>,
     roots: State<'_, Roots>,
     root_id: String,
     limit: u32,
 ) -> Result<Vec<String>, String> {
-    let path = roots.path_for(&root_id)?;
+    let path = owned_root(&window, &windows, &roots, &root_id)?;
     Ok(documents_for_sweep(Path::new(&path), limit as usize))
 }
 
@@ -881,10 +978,12 @@ pub fn sweep_documents(
 #[tauri::command]
 pub fn reveal_in_finder(
     app: AppHandle,
+    window: WebviewWindow,
+    windows: State<'_, Windows>,
     roots: State<'_, Roots>,
     path: String,
 ) -> Result<(), String> {
-    let path = checked(&roots, &path)?;
+    let path = checked(&window, &windows, &roots, Access::Nearby, &path)?;
     app.opener()
         .reveal_item_in_dir(&path)
         .map_err(|e| format!("{}: {e}", path.display()))
@@ -893,8 +992,14 @@ pub fn reveal_in_finder(
 /// Hands a file to whatever macOS opens it with. This is the only way a non editable file in the
 /// tree can be opened at all, so it has to work for anything, not just for documents.
 #[tauri::command]
-pub fn open_external(app: AppHandle, roots: State<'_, Roots>, path: String) -> Result<(), String> {
-    let path = checked(&roots, &path)?;
+pub fn open_external(
+    app: AppHandle,
+    window: WebviewWindow,
+    windows: State<'_, Windows>,
+    roots: State<'_, Roots>,
+    path: String,
+) -> Result<(), String> {
+    let path = checked(&window, &windows, &roots, Access::Nearby, &path)?;
     app.opener()
         .open_path(path_string(&path), None::<&str>)
         .map_err(|e| format!("{}: {e}", path.display()))
@@ -908,8 +1013,37 @@ pub fn open_external(app: AppHandle, roots: State<'_, Roots>, path: String) -> R
 /// file another program has touched since. A file that is not valid UTF-8 is an error rather than
 /// a lossy conversion, because a lossy read followed by a save would corrupt the user's file.
 #[tauri::command(async)]
-pub fn file_read(roots: State<'_, Roots>, path: String) -> Result<ReadResult, String> {
-    read_document(&checked(&roots, &path)?)
+pub fn file_read(
+    window: WebviewWindow,
+    windows: State<'_, Windows>,
+    roots: State<'_, Roots>,
+    path: String,
+) -> Result<ReadResult, String> {
+    read_document(&checked(&window, &windows, &roots, Access::Document, &path)?)
+}
+
+/// The same read for a file that is not text: an image or a PDF the app draws in the editor pane
+/// instead of handing to macOS.
+///
+/// The answer is a raw body rather than a value serde has to encode, which is what
+/// `tauri::ipc::Response` is for and what `pdf::pdf_compile` already answers with. A JSON array of
+/// numbers costs roughly four bytes per byte and is parsed one element at a time, so a ten megabyte
+/// PDF would arrive as forty megabytes of text for the webview to walk; this arrives as an
+/// `ArrayBuffer` and is turned into a blob url without a copy anybody chose.
+///
+/// There is no `modified_ms` here and no counterpart to `file_write`. Nothing views a file and then
+/// writes it, so there is no timestamp for a conflict to be detected against and nothing for one to
+/// be handed back to.
+#[tauri::command(async)]
+pub fn file_bytes(
+    window: WebviewWindow,
+    windows: State<'_, Windows>,
+    roots: State<'_, Roots>,
+    path: String,
+) -> Result<tauri::ipc::Response, String> {
+    let allowed = windows.allowed(&roots, window.label(), Access::Nearby)?;
+    let bytes = read_bytes(&allowed, &path)?;
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 /// Writes a document atomically: a temp file in the same directory, flushed and synced, then
@@ -931,12 +1065,14 @@ pub fn file_read(roots: State<'_, Roots>, path: String) -> Result<ReadResult, St
 #[tauri::command(async)]
 pub fn file_write(
     app: AppHandle,
+    window: WebviewWindow,
+    windows: State<'_, Windows>,
     roots: State<'_, Roots>,
     path: String,
     text: String,
     expected_modified_ms: Option<i64>,
 ) -> Result<WriteResult, String> {
-    let path = checked(&roots, &path)?;
+    let path = checked(&window, &windows, &roots, Access::Document, &path)?;
     let result = write_document(&path, &text, expected_modified_ms)?;
     // A conflict wrote nothing, and whatever moved the file on is an outside change the watcher
     // does report.
@@ -951,22 +1087,26 @@ pub fn file_write(
 /// has to guess at it or race another process for it.
 #[tauri::command]
 pub fn file_create(
+    window: WebviewWindow,
+    windows: State<'_, Windows>,
     roots: State<'_, Roots>,
     parent_path: String,
     name: String,
 ) -> Result<FileNode, String> {
-    create_file(&checked(&roots, &parent_path)?, &name)
+    create_file(&checked(&window, &windows, &roots, Access::Folder, &parent_path)?, &name)
 }
 
 /// Creates an empty directory inside `parent_path`, under the same suggested-name rule as
 /// `file_create`.
 #[tauri::command]
 pub fn file_folder_create(
+    window: WebviewWindow,
+    windows: State<'_, Windows>,
     roots: State<'_, Roots>,
     parent_path: String,
     name: String,
 ) -> Result<FileNode, String> {
-    create_folder(&checked(&roots, &parent_path)?, &name)
+    create_folder(&checked(&window, &windows, &roots, Access::Folder, &parent_path)?, &name)
 }
 
 /// Renames a file or folder where it stands. `name` is a base name and not a path: a `name` holding
@@ -975,13 +1115,24 @@ pub fn file_folder_create(
 ///
 /// This is the only thing that changes a document's identity, and it happens because the user asked
 /// for it. Nothing in this app renames a file on its own, least of all because a heading changed.
+///
+/// A standalone document may be renamed too, and its window follows it to the new name.
 #[tauri::command]
 pub fn file_rename(
+    app: AppHandle,
+    window: WebviewWindow,
+    windows: State<'_, Windows>,
     roots: State<'_, Roots>,
     path: String,
     name: String,
 ) -> Result<FileNode, String> {
-    rename_entry(&checked(&roots, &path)?, &name)
+    let from = checked(&window, &windows, &roots, Access::Document, &path)?;
+    let node = rename_entry(&from, &name)?;
+    let to = resolve(Path::new(&node.path))?;
+    if windows.document_moved(window.label(), &from, &to)? {
+        crate::watch::watch_document(&app, window.label(), &to);
+    }
+    Ok(node)
 }
 
 /// Moves a file or folder into `dest_dir`, keeping its name unless that name is taken there.
@@ -992,11 +1143,13 @@ pub fn file_rename(
 /// written at all.
 #[tauri::command]
 pub fn file_move(
+    window: WebviewWindow,
+    windows: State<'_, Windows>,
     roots: State<'_, Roots>,
     path: String,
     dest_dir: String,
 ) -> Result<FileNode, String> {
-    let open = open_root_paths(&roots)?;
+    let open = windows.allowed(&roots, window.label(), Access::Folder)?;
     let path = resolve_in_roots(&open, &path)?;
     let dest_dir = resolve_in_roots(&open, &dest_dir)?;
     move_entry(&path, &dest_dir)
@@ -1005,16 +1158,26 @@ pub fn file_move(
 /// Copies a file, or a folder and everything under it, beside itself under a free name. The copy is
 /// byte for byte: nothing is parsed, normalised or reformatted on the way through.
 #[tauri::command(async)]
-pub fn file_duplicate(roots: State<'_, Roots>, path: String) -> Result<FileNode, String> {
-    duplicate_entry(&checked(&roots, &path)?)
+pub fn file_duplicate(
+    window: WebviewWindow,
+    windows: State<'_, Windows>,
+    roots: State<'_, Roots>,
+    path: String,
+) -> Result<FileNode, String> {
+    duplicate_entry(&checked(&window, &windows, &roots, Access::Folder, &path)?)
 }
 
 /// Sends a file or folder to the system Trash through the `trash` crate, never `remove_file`. These
 /// are the user's own documents and this app does not get to be the reason one of them is gone for
 /// good, so a delete is always something Finder can undo.
 #[tauri::command(async)]
-pub fn file_trash(roots: State<'_, Roots>, path: String) -> Result<(), String> {
-    trash_entry(&checked(&roots, &path)?)
+pub fn file_trash(
+    window: WebviewWindow,
+    windows: State<'_, Windows>,
+    roots: State<'_, Roots>,
+    path: String,
+) -> Result<(), String> {
+    trash_entry(&checked(&window, &windows, &roots, Access::Folder, &path)?)
 }
 
 /// Writes a pasted image into an `assets/` folder beside the document that received the paste,
@@ -1026,12 +1189,15 @@ pub fn file_trash(roots: State<'_, Roots>, path: String) -> Result<(), String> {
 /// relative to the document, so the folder stays movable and shareable as a whole.
 #[tauri::command(async)]
 pub fn asset_write(
+    window: WebviewWindow,
+    windows: State<'_, Windows>,
     roots: State<'_, Roots>,
     doc_path: String,
     bytes: Vec<u8>,
     name: String,
 ) -> Result<AssetResult, String> {
-    write_asset(&checked(&roots, &doc_path)?, &bytes, &name)
+    let doc = checked(&window, &windows, &roots, Access::Document, &doc_path)?;
+    write_asset(&doc, &bytes, &name)
 }
 
 // The SQLite index, which lives in the app data directory and never inside a folder the user
@@ -1062,7 +1228,7 @@ pub fn index_status(app: AppHandle) -> Result<IndexStatus, String> {
     crate::index::status(&app)
 }
 
-/// Fuzzy match over paths relative to their root, across every open root, best score first.
+/// Fuzzy match over paths relative to their root, across the asking window's folders, best score first.
 ///
 /// `ranges` index into `rel_path`, which is also the string the row shows, so a match on a folder
 /// name is highlighted where it really was. They are character offsets and not byte offsets,
@@ -1070,20 +1236,30 @@ pub fn index_status(app: AppHandle) -> Result<IndexStatus, String> {
 #[tauri::command(async)]
 pub fn search_quick_open(
     app: AppHandle,
+    window: WebviewWindow,
+    windows: State<'_, Windows>,
     query: String,
     limit: u32,
 ) -> Result<Vec<QuickOpenHit>, String> {
-    crate::index::quick_open(&app, &query, limit)
+    let ids = windows.roots_of(window.label())?;
+    crate::index::quick_open(&app, &ids, &query, limit)
 }
 
-/// Full text search across every open root through FTS5.
+/// Full text search across the asking window's folders through FTS5.
 ///
 /// `line` is one based and counted over the file as it sits on disk, frontmatter included, so
 /// jumping to a hit lands on the line the user can see in any other editor. `ranges` index into
 /// `snippet`, again by character.
 #[tauri::command(async)]
-pub fn search_text(app: AppHandle, query: String, limit: u32) -> Result<Vec<SearchHit>, String> {
-    crate::index::search(&app, &query, limit)
+pub fn search_text(
+    app: AppHandle,
+    window: WebviewWindow,
+    windows: State<'_, Windows>,
+    query: String,
+    limit: u32,
+) -> Result<Vec<SearchHit>, String> {
+    let ids = windows.roots_of(window.label())?;
+    crate::index::search(&app, &ids, &query, limit)
 }
 
 /// Every document holding a relative markdown link that resolves to `path`.
@@ -1091,6 +1267,12 @@ pub fn search_text(app: AppHandle, query: String, limit: u32) -> Result<Vec<Sear
 /// This is a reverse lookup over links that are already in the files. Nothing is written anywhere
 /// to make a backlink exist, and a document with no incoming links simply has none.
 #[tauri::command(async)]
-pub fn backlinks_for(app: AppHandle, path: String) -> Result<Vec<Backlink>, String> {
-    crate::index::backlinks(&app, &path)
+pub fn backlinks_for(
+    app: AppHandle,
+    window: WebviewWindow,
+    windows: State<'_, Windows>,
+    path: String,
+) -> Result<Vec<Backlink>, String> {
+    let ids = windows.roots_of(window.label())?;
+    crate::index::backlinks(&app, &ids, &path)
 }

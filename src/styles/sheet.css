@@ -1,4 +1,4 @@
-/* The page a document sits on: the scroller, the measure, and the three widths.
+/* The page a document sits on: the scroller, the measure, and the five widths.
  *
  * .editor-pane is the scroll container and .sheet is the single column inside it, centred by the
  * pane rather than by auto margins so the sticky toolbar can be a sibling of the sheet and still
@@ -20,13 +20,41 @@
 }
 
 /* Growing rather than hugging its content keeps the sticky toolbar at the bottom of the window
-   when the document is one line long, without the toolbar needing a rule of its own here. */
+   when the document is one line long, without the toolbar needing a rule of its own here. Growing
+   is also what puts hundreds of pixels of blank page under a short document, and that space is
+   nobody's until something in the sheet claims it: hence the column, whose only job is to hand
+   what is left over to the append zone below. */
 .sheet {
+  display: flex;
+  flex-direction: column;
   flex: 1 0 auto;
   width: 100%;
   min-width: 0;
   max-width: var(--measure);
   padding: var(--sheet-pad-t) var(--sheet-pad-x) var(--sheet-pad-b);
+}
+
+/* The clearance under the last line, moved off the sheet and on to the zone that fills the rest of
+   the pane, because padding is not somewhere a click can land: with it on the sheet, the bottom of
+   every document was a strip that blurred the editor rather than putting the caret in it. The .txt
+   surface has no zone under it and no caret to put anywhere in particular, so it keeps the padding
+   above.
+
+   The two width rules further down say only what they change for the same reason: where the bottom
+   of the sheet is settled is here, once, and a padding shorthand in either of them would quietly
+   set it back. */
+.sheet:has(> .append-zone) {
+  padding-bottom: 0;
+}
+
+/* The blank page below the document. It takes whatever the pane has left over and never shrinks
+   below the clearance the toolbar pill needs, so a long document ends with the same gap under its
+   last line as it always had and a short one is clickable all the way down. What a press on it does
+   is in src/App.tsx, which is also where it is said why it draws nothing. */
+.append-zone {
+  flex: 1;
+  min-height: var(--sheet-pad-b);
+  cursor: text;
 }
 
 /* EditorContent's wrapper. It exists only to hold the editable and must not become a second box
@@ -40,9 +68,14 @@
 }
 
 /* The measure is in em against the shell's 13px, which is what --measure has always meant in this
-   palette, so the three steps are 494px, 598px and 728px whatever the document's own size is.
-   Narrow is a comfortable 58 characters of prose, normal is 70, and wide exists for the documents
-   that are mostly tables and fenced blocks rather than for reading. */
+   palette, so the four measured steps are 403px, 494px, 598px and 728px whatever the document's
+   own size is. That is one ratio applied four times, about 1.22 a step: tight is 46 characters of
+   prose, narrow is a comfortable 58, normal is 70, and wide exists for the documents that are
+   mostly tables and fenced blocks rather than for reading. */
+:root[data-width="tight"] .sheet {
+  max-width: var(--measure-tight);
+}
+
 :root[data-width="narrow"] .sheet {
   max-width: var(--measure-narrow);
 }
@@ -51,9 +84,27 @@
   max-width: var(--measure-wide);
 }
 
-/* The toolbar pill floats over the end of the document, so the last paragraph needs to be able to
-   scroll clear of it: roughly 96px of pill and its inset, plus enough that the final line is not
-   sitting right on top of the chrome. */
+/* Full is the step where the sheet stops being a page and takes the pane, so it is the one width
+   that is not a measure. It still has a ceiling, because a line of prose that runs the whole of a
+   large display is a line whose end nobody finds: 1352px, which the pane beside an open sidebar
+   reaches only past 1600px of window. So this genuinely fills the window on a laptop, including a
+   16 inch one at full screen, and is a backstop rather than a measure on a desktop display, where
+   the alternative is a paragraph a couple of hundred characters wide. The padding widens with it
+   for the same reason the ceiling exists, and it is paper either side of the text rather than a
+   margin the sheet is centred by. Written above the compact rule so a small window still gets the
+   compact padding, which is tighter than this on purpose. */
+:root[data-width="full"] .sheet {
+  max-width: var(--measure-full);
+  padding-left: var(--sheet-pad-x-full);
+  padding-right: var(--sheet-pad-x-full);
+}
+
+/* A narrow window gives the page back most of what the margins were taking, at the top and at both
+   sides. The clearance under the last line is not one of the three: the toolbar pill is the same
+   size in a small window as in a large one, so what the document has to scroll clear of is the same
+   distance either way. */
 :root[data-compact] .sheet {
-  padding: var(--sheet-pad-t-compact) var(--sheet-pad-x-compact) var(--sheet-pad-b);
+  padding-top: var(--sheet-pad-t-compact);
+  padding-left: var(--sheet-pad-x-compact);
+  padding-right: var(--sheet-pad-x-compact);
 }

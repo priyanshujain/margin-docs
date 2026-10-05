@@ -1,4 +1,4 @@
-// Cmd+K: every command the app has, by name.
+// Cmd+Shift+P: every command the app has, by name.
 //
 // This is the one palette with nothing behind it. No index, no IPC, no store: the rows are the
 // table in src/keys/commands.ts filtered by a subsequence match, so it answers on a build where

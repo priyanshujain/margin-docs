@@ -8,6 +8,7 @@
 
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import type { CalloutKind, HeadingLevel, MarkdownDocument } from "../model/doc";
+import type { OutlineEntry } from "../model/outline";
 import type { MarkName } from "../model/schema";
 import { useDocumentFind as useMarkdownFind } from "./Editor";
 import { usePlainTextFind } from "./PlainTextEditor";
@@ -78,6 +79,47 @@ export interface EditorActiveState {
   inTable: boolean;
   /** Set only when `block` is "codeBlock". null is a fence with no language on it. */
   codeLanguage: string | null;
+
+  // The four below are src/editor/fits.ts's own answers, published so that the pill can draw them.
+  // Every one of them was already being asked at the moment a button was pressed, and answered by
+  // the command doing nothing at all: sixteen of the eighteen tools sat lit over a fence, a raw
+  // block or a table cell that refuses them, and a person who pressed one got silence. A tool that
+  // cannot run is a tool drawn dark, which is the same sentence the conflict state already says.
+  //
+  // Drawn dark rather than taken away, which is where this parts company with the editors that hide
+  // a toolbar item instead. The pill is a fixed surface at a fixed place, so a tool that vanishes
+  // under the pointer moves every tool beside it, and the layout is the one thing about this bar
+  // that never moves.
+
+  /** Whether a mark can exist over the selection, which a fence and a raw block both refuse: they
+   * declare `marks: ""`, so bold, italic, strikethrough, inline code, colour and a link have
+   * nowhere to live there. One answer covers all six because those two nodes are the only ones in
+   * the frozen schema that name their marks. */
+  canMark: boolean;
+  /** Whether a block node can go where the selection is: false in a fence, in a raw block, in a
+   * table cell and over a dragged rectangle of cells. One answer covers the rule, the table, the
+   * display formula and the mermaid fence, since every block in this schema is in the one group and
+   * every container either takes that group or takes none of it. */
+  canPlace: boolean;
+  /** And the same question for an inline node, which is a different answer in exactly one place: a
+   * table cell holds inline content, so a picture or an inline formula goes into one perfectly
+   * happily while a block does not.
+   *
+   * The same question `canInsertImage` answers, published rather than called because the pill draws
+   * itself from this snapshot and a live call would only be right on the renders the snapshot
+   * happened to cause. A drag across a rectangle of cells is the one that proves it: nothing else
+   * on this object moves, and the answer here goes from yes to no. */
+  canPlaceInline: boolean;
+  /** Whether a block conversion may run here at all. False in a raw block, whose bytes are the
+   * file's own, and false anywhere in a table, where a cell holds inline content and there is no
+   * block for a conversion to act on.
+   *
+   * A fence is not in that list and that is deliberate: turning one into a paragraph, a list or a
+   * quote is an edit markdown can spell and src/editor/fits.test.ts pins it as one that happens.
+   * The heading levels below the two with an underlined spelling are the one thing a fence of more
+   * than one line still refuses, and that is a question about the block's content rather than about
+   * where the caret is, so it is not one a tool can be drawn dark for. */
+  canConvert: boolean;
 }
 
 /**
@@ -90,7 +132,36 @@ export interface EditorHandle {
   /** Puts the cursor back where it was. Every button calls this, because clicking one takes focus
    * out of the document and a formatting command without a selection has nothing to act on. */
   focus: () => void;
+  /**
+   * Puts the cursor at the end of the document, in a paragraph, making one first if the last block
+   * is not already an empty one.
+   *
+   * The way back in from the paper under the page. A document is shorter than the pane far more
+   * often than it is longer, so most of what is on screen below the last line is blank sheet, and a
+   * press there used to land on a div that is not the editable: the caret did not move and the
+   * editor lost the focus it had. Clicking the page put the writer out of their own document.
+   *
+   * It is also the general answer to a document whose last block has nowhere after it to type. The
+   * table lane and the code lane each grew one of these for their own block and their own key, and
+   * both are still the right thing for the caret already inside those blocks; this is the one that
+   * does not need the caret to be anywhere in particular, which is what makes it the way out of a
+   * rule, a picture, a diagram or a formula that ends the file.
+   *
+   * The paragraph it makes when it has to is nothing to the serializer, so the document is dirtied
+   * and the file gains no byte, which is the same trade the two lanes above already make.
+   */
+  focusEnd: () => void;
   toggleMark: (mark: MarkName) => void;
+  /**
+   * The colour of the text, and the colour behind it. null takes the mark off.
+   *
+   * Set rather than toggled, which is the difference between a swatch and the four buttons beside
+   * it: pressing Red over red text means red, and the way back out is the None swatch. A caret
+   * inside a coloured run recolours the whole run, since a colour is a property of a phrase and
+   * splitting one in half was never the gesture.
+   */
+  setTextColor: (color: string | null) => void;
+  setHighlight: (color: string | null) => void;
   /** null clears the link across the selection. */
   setLink: (href: string | null, title?: string | null) => void;
   /** Turns the block the cursor is in into this one. Asking for the block it already is turns it
@@ -153,6 +224,29 @@ export interface DocumentFind {
   focus: () => void;
 }
 
+/**
+ * The document's headings and the way to one of them, for the outline rail beside the page.
+ *
+ * The third handle this editor publishes, beside the toolbar's and the find bar's, and the one that
+ * never writes: `reveal` moves the caret to a heading and scrolls the page so the heading is at the
+ * top, and that is the whole of what it can do to a document. The entries are read from the live
+ * tree on every change, so a row is never a heading the file used to have.
+ */
+export interface DocumentOutline {
+  /** A new array whenever a heading appears, goes, moves or is renamed, and the same one otherwise. */
+  entries: readonly OutlineEntry[];
+  /** The index in `entries` of the heading the reader is in, measured against the pane rather
+   * than taken from the caret: the last one that has scrolled into the top third, or the last of
+   * all once the pane is at its end. Null while the pane is above the first heading. A new
+   * snapshot on every scroll that changes the answer. */
+  current: number | null;
+  /** Takes an entry's `pos`. A position that no longer starts a heading, which an edit a keystroke
+   * ago can make of one, is declined rather than guessed at. */
+  reveal: (pos: number) => void;
+}
+
+export type { OutlineEntry };
+
 export interface EditorProps {
   /** The document to edit, already parsed by the bridge. A new object identity means a different
    * file or a reload from disk, never a keystroke: while a document is open the editor owns its
@@ -175,6 +269,13 @@ export type PlainTextProps = Omit<EditorProps, "onOpenLink">;
 
 /** The document surface itself. */
 export { DocumentEditor, useEditorHandle } from "./Editor";
+
+/**
+ * The outline of the document on screen, or null when there is no markdown document on screen. A
+ * .txt has no headings and a picture has no document, so unlike find there is no second surface to
+ * fold in here, and null is the sidebar's cue to draw nothing.
+ */
+export { useDocumentOutline } from "./Editor";
 
 /** The .txt surface. Which of the two to render comes from `documentKindForPath`. */
 export { PlainTextEditor } from "./PlainTextEditor";

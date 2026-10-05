@@ -1,9 +1,12 @@
-/* Syntax colours inside a fenced code block, and nothing else.
+/* What the code lane draws on top of a fence: the colour of the tokens inside it, and the one
+ * control in its corner.
  *
  * The surface, the border, the padding, the scroller and the language label are prose.css's, on the
- * <pre> and the <code> it already styles. What is here is the colour of the spans inside that
- * <code>, which are inline decorations from src/editor/blocks/code.ts carrying highlight.js's own
- * class names. They are not in the document: nothing selected here can change a byte of the file.
+ * <pre> and the <code> it already styles. Everything here belongs to src/editor/blocks/code.ts
+ * instead, and nothing in it is in the document: the spans are inline decorations carrying
+ * highlight.js's class names, the button is a widget decoration, and neither can change a byte of
+ * the file. It is the same split mermaid.css has with the same file, one lane's own drawing kept
+ * out of the sheet that styles the schema's own DOM.
  *
  * Only the classes lowlight can actually emit are listed. A grammar that emits a class this file
  * does not name renders in the document's ink, which is the right answer for an unclassified token
@@ -82,4 +85,97 @@
 
 .prose pre > code .hljs-strong {
   font-weight: 600;
+}
+
+/* --------------------------------------------------------------------------------------------
+   The copy control
+
+   One button, in the strip prose.css reserves at the top of every fence, opposite the language.
+   It is a widget decoration rather than an element of the block, so it sits inside the <code> in
+   the DOM and is absolutely positioned out of it: the containing block is the <pre>, which is the
+   positioned ancestor, so the button neither scrolls with a long line nor takes a column from the
+   measure the way a gutter of line numbers would.
+
+   Faded rather than absent, which is AppFlowy's answer and the one already in use on a file row in
+   tree.css: nothing at rest, most of the way in when the pointer is anywhere on the block, all the
+   way in on the button itself. A control that appears only under the pointer is a control nobody
+   who has not already found it knows is there, and one drawn at full strength on every fence in a
+   long document is a column of buttons down a page of prose.
+   -------------------------------------------------------------------------------------------- */
+
+/* The widget's own element, and a point rather than a box on purpose. prosemirror-view decides
+   whether a vertical arrow is walking out of a fence by measuring the <code>'s own children against
+   the caret, and a button drawn above the first line of code reads as a line above the caret in that
+   measurement: with it as the widget's root, ArrowUp out of a fence that opens a document stopped
+   making the paragraph src/editor/blocks/code.ts makes there. A box with no height is passed over by
+   that walk. Anchored at the corner the button then hangs off. */
+.prose .code-chrome {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 0;
+  height: 0;
+}
+
+.prose .code-copy {
+  position: absolute;
+  /* On the first line of code, which is where a bare fence's top right corner now is. The button is
+     1.6em against a 1.55em line box, so the fence's own top padding centres it on that line to
+     within half a pixel, which is worth more than the arithmetic that would say so exactly.
+     Placed by its icon rather than by its box: the hit target is wider than the 1em glyph inside it,
+     so half that overhang comes back off the inset or the icon sits nearer the right edge than the
+     code sits from the left. */
+  top: var(--doc-code-pad);
+  right: calc(var(--doc-code-inset) - (var(--doc-code-button) - var(--doc-mono)) / 2);
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--doc-code-button);
+  height: var(--doc-code-button);
+  padding: 0;
+  border: 0;
+  /* The fence's own surface rather than nothing, because a bare fence has no strip to stand in and
+     a long line scrolls under the button. Invisible on a fence that does have one, and it costs
+     nothing at rest either way: the button is transparent until the pointer is on the block. */
+  border-radius: var(--r-sm);
+  background: var(--code-surface);
+  /* The em everything above is measured in. A button does not inherit the document's type, and
+     without this one the browser's own 13.333px would size the strip. */
+  font-size: var(--doc-mono);
+  color: var(--ink-soft);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms var(--ease), color 120ms var(--ease), background-color 120ms var(--ease);
+}
+
+/* A fence with a label has a strip instead, and the button centres on it beside the label. */
+.prose pre[data-language] .code-copy {
+  top: calc((var(--doc-code-strip) - var(--doc-code-button)) / 2);
+}
+
+.prose .code-copy svg {
+  width: 1em;
+  height: 1em;
+}
+
+.prose pre:hover .code-copy {
+  opacity: 0.7;
+}
+
+.prose pre:hover .code-copy:hover,
+.prose .code-copy:focus-visible,
+.prose .code-copy[data-copied] {
+  opacity: 1;
+}
+
+.prose .code-copy:hover,
+.prose .code-copy[data-copied] {
+  background: var(--code-wash);
+  color: var(--ink);
+}
+
+.prose .code-copy:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }

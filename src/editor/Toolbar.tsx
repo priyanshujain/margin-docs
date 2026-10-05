@@ -31,16 +31,28 @@
 // whether it is open, is edited on the block itself. It does cost the row its last 32px at the
 // minimum window, where the pill was already 4px over and living on the tightened separators in
 // toolbar.css.
+//
+// Colour is the newest and it sits with the four inline marks, because that is what it is. It is a
+// popover rather than two tools because there are two rows of it and the pill has room for one
+// button, and it carries no chord: Google Docs has none for colour either, and a chord here is a
+// row in the matrix src/editor/fits.test.ts builds over every hostile context in the editor.
 
 import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { Icon } from "../components/Icon";
 import { useEscapeLayer } from "../escape";
+import { PRIMARY_LABEL, keyLabel, keysFor } from "../keys/bindings";
+import { onCommand } from "../keys/commands";
 import { assetWrite } from "../api/files";
 import { notify } from "../store/useToast";
 import { CALLOUT_KINDS, type MarkdownDocument } from "../model/doc";
+import { HIGHLIGHT_COLORS, TEXT_COLORS } from "../model/colors";
 import { HEADING_LEVELS } from "../model/schema";
 import { useEditorHandle, type EditorActiveState, type TableOp } from "./index";
 
+// An empty paragraph in an ordinary document, which is what the pill draws before there is an
+// editor to ask. The four permissions say yes for the same reason the block says paragraph: this is
+// the shape of a document with nothing in the way, and nothing is on screen to press anyway, since
+// no editor is the first thing `disabled` is true for.
 const DEFAULT_ACTIVE: EditorActiveState = {
   marks: [],
   block: "paragraph",
@@ -48,6 +60,10 @@ const DEFAULT_ACTIVE: EditorActiveState = {
   callout: null,
   inTable: false,
   codeLanguage: null,
+  canMark: true,
+  canPlace: true,
+  canPlaceInline: true,
+  canConvert: true,
 };
 
 /** The size picker's ceiling. Anything bigger is a table nobody builds from a grid of squares. */
@@ -113,6 +129,34 @@ function calloutLabel(kind: string): string {
 }
 
 /**
+ * A chord in the glyphs the shortcuts sheet prints, from the form TipTap's keymap writes it in.
+ *
+ * The pill is the only place most of these are named. src/keys/bindings.ts holds the app's own
+ * chords and there is a sheet listing them, but the formatting chords are not in that table: they
+ * live in src/editor/shortcuts.ts as a TipTap keymap, because the editor rather than the window is
+ * what has to receive them. So the two surfaces cannot share a function, and this one exists to
+ * make sure they still share an answer: same glyphs, same order, and the primary modifier read off
+ * the same place rather than spelled with a literal command sign in an app that also builds for a
+ * browser.
+ *
+ * `keyLabel` is the one it cannot be. That function reads the house combo form, where Shift is
+ * carried by an upper case letter rather than named, and four of the chords here are Shift over a
+ * digit, which has no upper case to carry it.
+ */
+function chordLabel(chord: string): string {
+  const parts = chord.split("-");
+  const key = parts.pop() ?? "";
+  const mods =
+    (parts.includes("Mod") ? PRIMARY_LABEL : "") +
+    (parts.includes("Alt") ? "⌥" : "") +
+    (parts.includes("Shift") ? "⇧" : "");
+  return `${mods}${key.toUpperCase()}`;
+}
+
+/** Link's chord is the one the pill shares with the rest of the app, so it is read rather than written. */
+const LINK_CHORD = keysFor("insert-link").map(keyLabel)[0];
+
+/**
  * Whether the caret is in a toggle's title, which is chrome rather than content.
  *
  * The title is a node view's own editable island, so ProseMirror's selection stays wherever it was
@@ -146,18 +190,31 @@ function useCaretInToggleTitle(): boolean {
   return inTitle;
 }
 
+/**
+ * `label` is the action, `chord` is what it answers to on the keyboard, and the two are held apart
+ * on the button.
+ *
+ * The tooltip is data-tip and src/styles/toolbar.css draws it, because a native title in a macOS
+ * webview is a second of waiting and then system chrome in a font that belongs to no theme this app
+ * has. What a title still did well was carry the button's accessible name, since every tool here is
+ * a glyph with no text in it, so that job moves to aria-label rather than being lost. Only one of
+ * the two attributes says the chord: a screen reader announcing "Bold ⌘B" is reading a picture of a
+ * key out loud, and the chord is drawn for the eye that is already on the button.
+ */
 function tool(
   active: boolean,
   onClick: () => void,
-  title: string,
+  label: string,
   content: ReactNode,
   disabled = false,
+  chord?: string,
 ): ReactElement {
   return (
     <button
       className="tool"
       data-on={active}
-      title={title}
+      data-tip={chord ? `${label} (${chord})` : label}
+      aria-label={label}
       disabled={disabled}
       onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
@@ -172,7 +229,9 @@ const ITALIC_D = "M10 5h6M6 19h6M13 5l-4 14";
 const STRIKETHROUGH_D =
   "M5 12h14M8 7.5c0-1.5 1.6-2.5 4-2.5s4 1 4 2.5M8 16.5c0 1.5 1.6 2.5 4 2.5s4-1 4-2.5";
 const CODE_D = "M9 6l-5 6 5 6M15 6l5 6-5 6";
-const HEADING_D = "M5 5v14M5 12h8M13 5v14";
+// The H used to run from x=5 to x=13 in a 24 unit box, so it sat left of centre in a round button
+// that every other glyph here is centred in.
+const HEADING_D = "M7 5v14M7 12h10M17 5v14";
 const BULLET_LIST_D = "M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01";
 const ORDERED_LIST_D =
   "M10 6h11M10 12h11M10 18h11M4 4v4M3 4h2M4 10.5h1.5a1 1 0 1 1 0 2H4h1.5a1 1 0 1 1 0 2H4M4 20.5l1.4-1.7a1 1 0 1 0-1.4-1.6";
@@ -183,12 +242,17 @@ const CODE_BLOCK_D = "M4 6h16v12H4zM7 10l3 2-3 2";
 const LINK_D =
   "M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1";
 const REMOVE_D = "M18 6L6 18M6 6l12 12";
+// The mark on the row a menu's current value is on. Nothing else in the pill draws one.
+const CHECK_D = "M5 12.5l4.5 4.5L19 7";
 const HR_D = "M5 12h5M14 12h5";
 const IMAGE_D = "M4 5h16v14H4zM4 16l4.5-4.5 3 3L16 10l4 4";
 const ALERT_D = "M12 3l10 18H2zM12 9v5M12 17h.01";
 const CALLOUT_D = "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 11v5M12 8h.01";
 const TABLE_D = "M4 5h16v14H4zM4 10h16M10 10v9M15 10v9";
 const INSERT_D = "M12 5v14M5 12h14";
+// An A over a bar, which is what every editor draws for this and what people look for. The
+// crossbar meets the strokes where they really are at that height rather than at a round number.
+const COLOR_D = "M6 15l6-11 6 11M8.2 11h7.6M5 20h14";
 
 export function Toolbar({ document, saveState = "idle", onResolveConflict }: ToolbarProps): ReactElement {
   const editor = useEditorHandle();
@@ -196,7 +260,23 @@ export function Toolbar({ document, saveState = "idle", onResolveConflict }: Too
   const inTitle = useCaretInToggleTitle();
   const disabled = !editor || saveState === "conflict" || inTitle;
 
+  // And the four that are about where the caret is rather than about the document as a whole. Each
+  // is `disabled` plus one of the editor's own answers, named here rather than inlined so that a
+  // tool's line says which permission it needs and so that two tools needing the same one cannot
+  // drift apart. src/editor/index.ts is where each answer comes from and why.
+  //
+  // The three tools with a second job when the caret is already inside what they make are the only
+  // ones that read more than one field. The code block tool configures a fence from inside one and
+  // the table tool edits a table from inside one, so neither is dark in the block it is dark for
+  // making; the image tool asks the inline question, because a picture goes into a table cell that
+  // refuses every block on the bar.
+  const markDisabled = disabled || !active.canMark;
+  const placeDisabled = disabled || !active.canPlace;
+  const inlineDisabled = disabled || !active.canPlaceInline;
+  const convertDisabled = disabled || !active.canConvert;
+
   const [headingOpen, setHeadingOpen] = useState(false);
+  const [colorOpen, setColorOpen] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
   const [calloutOpen, setCalloutOpen] = useState(false);
   const [tableOpen, setTableOpen] = useState(false);
@@ -216,6 +296,7 @@ export function Toolbar({ document, saveState = "idle", onResolveConflict }: Too
   // exist behind an invisible sheet.
   const closePopovers = () => {
     setHeadingOpen(false);
+    setColorOpen(false);
     setLinkOpen(false);
     setCalloutOpen(false);
     setTableOpen(false);
@@ -239,7 +320,7 @@ export function Toolbar({ document, saveState = "idle", onResolveConflict }: Too
   // survivable with two small popovers and is not with six. Nothing is prevented, so the click
   // still lands where it was aimed.
   useEffect(() => {
-    if (!(headingOpen || linkOpen || calloutOpen || tableOpen || insertOpen || languageOpen)) return;
+    if (!(headingOpen || colorOpen || linkOpen || calloutOpen || tableOpen || insertOpen || languageOpen)) return;
     const onDown = (e: MouseEvent) => {
       const target = e.target instanceof Element ? e.target : null;
       if (target?.closest(".editor-toolbar")) return;
@@ -248,46 +329,34 @@ export function Toolbar({ document, saveState = "idle", onResolveConflict }: Too
     window.addEventListener("mousedown", onDown, true);
     return () => window.removeEventListener("mousedown", onDown, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [headingOpen, linkOpen, calloutOpen, tableOpen, insertOpen, languageOpen]);
+  }, [headingOpen, colorOpen, linkOpen, calloutOpen, tableOpen, insertOpen, languageOpen]);
 
   // A conflict disables every tool, and a popover left open over a disabled pill would still have
   // live items in it. The file on disk has already moved by then, so nothing here gets to write to
-  // the buffer until the user has said which copy wins. Only the six setState functions are read,
+  // the buffer until the user has said which copy wins. Only the seven setState functions are read,
   // and those are stable, so the closure this captures is never the stale one.
   useEffect(() => {
     if (disabled) closePopovers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [disabled]);
 
-  // Ported Mod-K handling. Note for whoever wires the pane together: cmd+k is already bound
-  // globally to "command-palette" in src/keys/bindings.ts with allowInInput: true, and that
-  // listener is installed at app boot, before this component ever mounts, so it always sees the
-  // keydown first. The defaultPrevented check below means this never double-fires on top of it,
-  // but it also means this shortcut is inert until a document-context override for cmd+k exists.
-  // Clicking the link tool still opens the popover either way.
+  // And a menu left standing over a tool that has just gone dark, which is the same thing one tool
+  // at a time. The caret can move under an open popover without a pointer going anywhere near it,
+  // since every button in the pill prevents the press that would take focus out of the document, so
+  // an arrow key with the Insert menu up walks into a table cell that refuses everything in it. Any
+  // of the four permissions moving at all means the caret is somewhere materially different from
+  // where the menu was opened, and a menu about the block somebody has left is not one to leave up.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.isComposing || e.defaultPrevented) return;
-      if (e.key.toLowerCase() !== "k" || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
-      if (!editor && !linkOpen) return;
-      e.preventDefault();
-      e.stopPropagation();
-      if (linkOpen) {
-        setLinkOpen(false);
-      } else {
-        setLinkValue("");
-        setLinkOpen(true);
-      }
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [editor, linkOpen]);
+    closePopovers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active.canMark, active.canPlace, active.canPlaceInline, active.canConvert]);
 
   useEscapeLayer(linkOpen, () => {
     setLinkOpen(false);
     editor?.focus();
   });
   useEscapeLayer(headingOpen, () => setHeadingOpen(false));
+  useEscapeLayer(colorOpen, () => setColorOpen(false));
   useEscapeLayer(calloutOpen, () => setCalloutOpen(false));
   useEscapeLayer(tableOpen, () => setTableOpen(false));
   useEscapeLayer(insertOpen, () => setInsertOpen(false));
@@ -295,6 +364,15 @@ export function Toolbar({ document, saveState = "idle", onResolveConflict }: Too
     setLanguageOpen(false);
     editor?.focus();
   });
+
+  // One gesture, one colour, and the menu closes: a swatch is a choice rather than a knob, which is
+  // how the heading and callout items behave and not how the table ops do.
+  const applyColor = (which: "setTextColor" | "setHighlight", color: string | null) => {
+    if (which === "setTextColor") editor?.setTextColor(color);
+    else editor?.setHighlight(color);
+    setColorOpen(false);
+    editor?.focus();
+  };
 
   const applyLink = () => {
     if (!editor) return;
@@ -318,6 +396,22 @@ export function Toolbar({ document, saveState = "idle", onResolveConflict }: Too
     setLinkValue("");
     setLinkOpen(true);
   };
+
+  // Cmd+K arrives here as a command rather than as a key: src/keys/bindings.ts owns the chord in
+  // the document context and this is a panel subscribing to its own command, the way quick open
+  // and the shortcuts sheet do. Nothing in this file listens for a keystroke any more, and that is
+  // the whole gain: the keymap already knows whether an overlay has the keyboard, that a chord may
+  // fire with the caret in an input, and that one chord belongs to exactly one thing, none of
+  // which a window listener reading `defaultPrevented` can know.
+  //
+  // Not subscribed while the pill is disabled, so a save conflict or a caret in a toggle title
+  // leaves the chord as inert as the greyed tool beside it. `linkOpen` is a dependency because the
+  // handler toggles on it, and resubscribing is what keeps that closure honest.
+  useEffect(() => {
+    if (disabled) return;
+    return onCommand("insert-link", openLink);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [disabled, linkOpen]);
 
   // The code block tool converts into a fence from outside one and configures the fence from
   // inside it. Turning one back into a paragraph moves into the foot of that popover rather than
@@ -371,16 +465,109 @@ export function Toolbar({ document, saveState = "idle", onResolveConflict }: Too
 
   return (
     <div className="editor-toolbar">
-      {tool(active.marks.includes("strong"), () => editor?.toggleMark("strong"), "Bold", <Icon d={BOLD_D} />, disabled)}
-      {tool(active.marks.includes("em"), () => editor?.toggleMark("em"), "Italic", <Icon d={ITALIC_D} />, disabled)}
+      {tool(
+        active.marks.includes("strong"),
+        () => editor?.toggleMark("strong"),
+        "Bold",
+        <Icon d={BOLD_D} />,
+        markDisabled,
+        chordLabel("Mod-b"),
+      )}
+      {tool(
+        active.marks.includes("em"),
+        () => editor?.toggleMark("em"),
+        "Italic",
+        <Icon d={ITALIC_D} />,
+        markDisabled,
+        chordLabel("Mod-i"),
+      )}
       {tool(
         active.marks.includes("strikethrough"),
         () => editor?.toggleMark("strikethrough"),
         "Strikethrough",
         <Icon d={STRIKETHROUGH_D} />,
-        disabled,
+        markDisabled,
+        chordLabel("Mod-Shift-x"),
       )}
-      {tool(active.marks.includes("code"), () => editor?.toggleMark("code"), "Inline code", <Icon d={CODE_D} />, disabled)}
+      {tool(
+        active.marks.includes("code"),
+        () => editor?.toggleMark("code"),
+        "Inline code",
+        <Icon d={CODE_D} />,
+        markDisabled,
+        chordLabel("Mod-e"),
+      )}
+      {/* Beside the other four inline marks, since that is what it is, and with no chord: Google
+          Docs has none for colour either, and the pill's chords are enumerated by
+          src/editor/fits.test.ts rather than listed, so one added here would be one more thing to
+          prove about every hostile context for a control nobody reaches for from the keyboard. */}
+      <span className="tool-wrap">
+        {tool(
+          colorOpen || active.marks.includes("textColor") || active.marks.includes("highlight"),
+          () => {
+            const wasOpen = colorOpen;
+            closePopovers();
+            if (!wasOpen) setColorOpen(true);
+          },
+          "Colour",
+          <Icon d={COLOR_D} />,
+          markDisabled,
+        )}
+        {colorOpen && (
+          <>
+            <div className="link-pop-backdrop" onMouseDown={() => setColorOpen(false)} />
+            <div className="color-pop" onMouseDown={(e) => e.stopPropagation()}>
+              {/* No pressed swatch on either row. `active.marks` carries mark names and not their
+                  attributes, so the pill can say that the caret is in a colour and cannot say
+                  which one; drawing the wrong swatch pressed would be worse than drawing none. */}
+              <span className="pop-label">Text</span>
+              <div className="swatch-row">
+                {TEXT_COLORS.map((color) => (
+                  <button
+                    key={color.hex}
+                    className="swatch"
+                    // The one place in the app a colour is not a token: it is the document's, out of
+                    // src/model/colors.ts, and it is what the swatch is for.
+                    style={{ background: color.hex }}
+                    title={color.label}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => applyColor("setTextColor", color.hex)}
+                  />
+                ))}
+                <button
+                  className="swatch-none"
+                  title="No text colour"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => applyColor("setTextColor", null)}
+                >
+                  <Icon d={REMOVE_D} size={12} />
+                </button>
+              </div>
+              <span className="pop-label">Highlight</span>
+              <div className="swatch-row">
+                {HIGHLIGHT_COLORS.map((color) => (
+                  <button
+                    key={color.hex}
+                    className="swatch"
+                    style={{ background: color.hex }}
+                    title={color.label}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => applyColor("setHighlight", color.hex)}
+                  />
+                ))}
+                <button
+                  className="swatch-none"
+                  title="No highlight"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => applyColor("setHighlight", null)}
+                >
+                  <Icon d={REMOVE_D} size={12} />
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </span>
       <span className="tool-sep" />
       <span className="tool-wrap">
         {tool(
@@ -392,11 +579,14 @@ export function Toolbar({ document, saveState = "idle", onResolveConflict }: Too
           },
           "Heading",
           <Icon d={HEADING_D} />,
-          disabled,
+          convertDisabled,
         )}
         {headingOpen && (
           <>
             <div className="link-pop-backdrop" onMouseDown={() => setHeadingOpen(false)} />
+            {/* The seven chords the pill has nowhere else to put. Mod-Alt-0 and Mod-Alt-1 through 6
+                are bound in src/editor/shortcuts.ts and every one of them is a row in here, since
+                the tool itself is a menu and has no single key of its own to name in a tooltip. */}
             <div className="heading-pop" onMouseDown={(e) => e.stopPropagation()}>
               <button
                 className="pop-item"
@@ -409,6 +599,8 @@ export function Toolbar({ document, saveState = "idle", onResolveConflict }: Too
                 }}
               >
                 Paragraph
+                <span className="pop-chord">{chordLabel("Mod-Alt-0")}</span>
+                <Icon d={CHECK_D} size={14} />
               </button>
               {HEADING_LEVELS.map((level) => (
                 <button
@@ -423,6 +615,8 @@ export function Toolbar({ document, saveState = "idle", onResolveConflict }: Too
                   }}
                 >
                   {`Heading ${level}`}
+                  <span className="pop-chord">{chordLabel(`Mod-Alt-${level}`)}</span>
+                  <Icon d={CHECK_D} size={14} />
                 </button>
               ))}
             </div>
@@ -430,15 +624,43 @@ export function Toolbar({ document, saveState = "idle", onResolveConflict }: Too
         )}
       </span>
       <span className="tool-sep" />
-      {tool(active.block === "bulletList", () => editor?.setBlock("bulletList"), "Bulleted list", <Icon d={BULLET_LIST_D} />, disabled)}
-      {tool(active.block === "orderedList", () => editor?.setBlock("orderedList"), "Numbered list", <Icon d={ORDERED_LIST_D} />, disabled)}
-      {tool(active.block === "taskList", () => editor?.setBlock("taskList"), "Task list", <Icon d={TASK_LIST_D} />, disabled)}
-      {tool(active.block === "blockquote", () => editor?.setBlock("blockquote"), "Quote", <Icon d={BLOCKQUOTE_D} />, disabled)}
+      {tool(
+        active.block === "bulletList",
+        () => editor?.setBlock("bulletList"),
+        "Bulleted list",
+        <Icon d={BULLET_LIST_D} />,
+        convertDisabled,
+        chordLabel("Mod-Shift-8"),
+      )}
+      {tool(
+        active.block === "orderedList",
+        () => editor?.setBlock("orderedList"),
+        "Numbered list",
+        <Icon d={ORDERED_LIST_D} />,
+        convertDisabled,
+        chordLabel("Mod-Shift-7"),
+      )}
+      {tool(
+        active.block === "taskList",
+        () => editor?.setBlock("taskList"),
+        "Task list",
+        <Icon d={TASK_LIST_D} />,
+        convertDisabled,
+        chordLabel("Mod-Shift-9"),
+      )}
+      {tool(
+        active.block === "blockquote",
+        () => editor?.setBlock("blockquote"),
+        "Quote",
+        <Icon d={BLOCKQUOTE_D} />,
+        convertDisabled,
+        chordLabel("Mod-Shift-b"),
+      )}
       {/* The third of the three wrapping commands, beside the two it behaves like: one press puts
           the block inside a <details>, a second takes it back out. The summary is typed into the
           toggle itself rather than asked for here, because it is the one part of a block in this
           pill that is a piece of the document and not a setting. */}
-      {tool(active.block === "toggle", () => editor?.setBlock("toggle"), "Toggle", <Icon d={TOGGLE_D} />, disabled)}
+      {tool(active.block === "toggle", () => editor?.setBlock("toggle"), "Toggle", <Icon d={TOGGLE_D} />, convertDisabled)}
       <span className="tool-wrap">
         {tool(
           calloutOpen || active.block === "callout",
@@ -449,7 +671,7 @@ export function Toolbar({ document, saveState = "idle", onResolveConflict }: Too
           },
           "Callout",
           <Icon d={CALLOUT_D} />,
-          disabled,
+          convertDisabled,
         )}
         {calloutOpen && (
           <>
@@ -468,21 +690,30 @@ export function Toolbar({ document, saveState = "idle", onResolveConflict }: Too
                   }}
                 >
                   {calloutLabel(kind)}
+                  <Icon d={CHECK_D} size={14} />
                 </button>
               ))}
+              {/* Under a rule, because it is not a sixth kind. The five above choose what the
+                  callout is and this one says it should stop being one, which is the same shape of
+                  row the language menu's own last item is, and the rule is what stops it reading as
+                  another thing to pick. Separators inside a popover only: the pill's own row is
+                  fixed. */}
               {active.block === "callout" && (
-                <button
-                  className="pop-item"
-                  title="Leave the blockquote it is on disk, without the marker"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => {
-                    editor?.setCallout(null);
-                    setCalloutOpen(false);
-                    editor?.focus();
-                  }}
-                >
-                  Plain quote
-                </button>
+                <>
+                  <div className="menu-sep" />
+                  <button
+                    className="pop-item"
+                    title="Leave the blockquote it is on disk, without the marker"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      editor?.setCallout(null);
+                      setCalloutOpen(false);
+                      editor?.focus();
+                    }}
+                  >
+                    Plain quote
+                  </button>
+                </>
               )}
             </div>
           </>
@@ -496,7 +727,8 @@ export function Toolbar({ document, saveState = "idle", onResolveConflict }: Too
             ? `Code block: ${active.codeLanguage ?? "no language"}`
             : "Code block",
           <Icon d={CODE_BLOCK_D} />,
-          disabled,
+          active.block === "codeBlock" ? disabled : convertDisabled,
+          chordLabel("Mod-Alt-c"),
         )}
         {languageOpen && (
           <>
@@ -548,6 +780,9 @@ export function Toolbar({ document, saveState = "idle", onResolveConflict }: Too
                   </button>
                 ))}
               </div>
+              {/* Everything above sets the fence's language and this ends the fence, so it sits
+                  under a rule rather than reading as one more chip in the cloud. */}
+              <div className="menu-sep" />
               <button
                 className="pop-item"
                 onMouseDown={(e) => e.preventDefault()}
@@ -565,7 +800,7 @@ export function Toolbar({ document, saveState = "idle", onResolveConflict }: Too
       </span>
       <span className="tool-sep" />
       <span className="tool-wrap">
-        {tool(active.marks.includes("link") || linkOpen, openLink, "Link (⌘K)", <Icon d={LINK_D} />, disabled)}
+        {tool(active.marks.includes("link") || linkOpen, openLink, "Link", <Icon d={LINK_D} />, markDisabled, LINK_CHORD)}
         {linkOpen && (
           <>
             <div className="link-pop-backdrop" onMouseDown={() => setLinkOpen(false)} />
@@ -602,8 +837,8 @@ export function Toolbar({ document, saveState = "idle", onResolveConflict }: Too
         )}
       </span>
       <span className="tool-sep" />
-      {tool(false, () => editor?.insertRule(), "Horizontal rule", <Icon d={HR_D} />, disabled)}
-      {tool(false, () => fileRef.current?.click(), "Insert image", <Icon d={IMAGE_D} />, disabled || !document)}
+      {tool(false, () => editor?.insertRule(), "Horizontal rule", <Icon d={HR_D} />, placeDisabled)}
+      {tool(false, () => fileRef.current?.click(), "Insert image", <Icon d={IMAGE_D} />, inlineDisabled || !document)}
       <input
         ref={fileRef}
         type="file"
@@ -628,7 +863,7 @@ export function Toolbar({ document, saveState = "idle", onResolveConflict }: Too
           },
           active.inTable ? "Table" : "Insert table",
           <Icon d={TABLE_D} />,
-          disabled,
+          active.inTable ? disabled : placeDisabled,
         )}
         {tableOpen && (
           <>
@@ -789,12 +1024,15 @@ export function Toolbar({ document, saveState = "idle", onResolveConflict }: Too
           },
           "Insert",
           <Icon d={INSERT_D} />,
-          disabled,
+          placeDisabled,
         )}
         {insertOpen && (
           <>
             <div className="link-pop-backdrop" onMouseDown={() => setInsertOpen(false)} />
             <div className="insert-pop" onMouseDown={(e) => e.stopPropagation()}>
+              {/* The other five popovers say what they are about, either in a heading like this one
+                  or in the shape of what is in them, and this one was three sentences in a box. */}
+              <span className="pop-label">Insert</span>
               <button
                 className="pop-item"
                 onMouseDown={(e) => e.preventDefault()}
