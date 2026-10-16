@@ -6,6 +6,7 @@ import {
   resolveTheme,
   schemeOf,
   storedPreference,
+  syncWindowScheme,
   watchSystemScheme,
   type Theme,
   type ThemeChoice,
@@ -23,6 +24,7 @@ interface ThemeState {
 }
 
 const start = storedPreference();
+syncWindowScheme(start.choice === "system" ? null : schemeOf(resolveTheme(start)));
 
 export const useTheme = create<ThemeState>((set, get) => ({
   choice: start.choice,
@@ -35,6 +37,7 @@ export const useTheme = create<ThemeState>((set, get) => ({
     const next = chosen({ choice: was, light, dark }, choice);
     const theme = resolveTheme(next);
     applyTheme(theme);
+    syncWindowScheme(next.choice === "system" ? null : schemeOf(theme));
     persistPreference(next);
     set({ choice: next.choice, light: next.light, dark: next.dark, theme });
   },

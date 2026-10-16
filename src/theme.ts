@@ -12,6 +12,9 @@
 // what the toggle command flips across, so a palette arriving without one would be a palette
 // neither of them could reach.
 
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { isDesktop } from "./ipc";
+
 export type Scheme = "light" | "dark";
 
 export type Theme = "light" | "sepia" | "mist" | "contrast" | "dark" | "graphite" | "midnight";
@@ -146,6 +149,10 @@ export function storedPreference(): Preference {
 export function applyTheme(theme: Theme): void {
   if (typeof document === "undefined") return;
   document.documentElement.setAttribute("data-theme", theme);
+}
+
+export function syncWindowScheme(scheme: Scheme | null): void {
+  if (isDesktop) getCurrentWindow().setTheme(scheme).catch(() => {});
 }
 
 export function persistPreference(preference: Preference): void {
